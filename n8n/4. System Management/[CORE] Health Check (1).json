@@ -1,0 +1,664 @@
+{
+  "name": "[CORE] Health Check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "3 4,6,8,10,12,14,16,18,20 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1168,
+        192
+      ],
+      "id": "b2554527-3fb5-4046-820b-f5ade10035b4",
+      "name": "⏰ Every 2h (Mon-Fri trading)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/system_health_check_all",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1408,
+        192
+      ],
+      "id": "f8135156-6c47-4b7f-9bac-b82b20c28f82",
+      "name": "🏥 Health Check All Pairs",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst data = Array.isArray(raw) ? raw[0] : raw;\n\nconst isHealthy = data.overall_status === 'HEALTHY';\nconst time = new Date(data.checked_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });\nconst emoji = isHealthy ? '💚' : '🔴';\nconst title = `${emoji} System ${data.overall_status} | ${time} UTC`;\n\nlet desc = '';\n\nfor (const pairData of data.pairs) {\n  const pairEmoji = pairData.status === 'HEALTHY' ? '✅' : '❌';\n  desc += `\\n**${pairEmoji} ${pairData.pair}**\\n`;\n  \n  for (const check of pairData.checks) {\n    const icon = check.status === 'OK' ? '✅' : '❌';\n    desc += `${icon} ${check.check}: ${check.value}\\n`;\n    if (check.status === 'FAIL') {\n      desc += `   💡 ${check.problem}\\n`;\n    }\n  }\n}\n\nconst totalOpen = data.pairs.reduce((sum, p) => sum + (p.summary?.open_trades || 0), 0);\ndesc += `\\n📊 ${totalOpen} open trade(s) total`;\n\nreturn [{ json: {\n  is_healthy: isHealthy,\n  payload: {\n    content: isHealthy ? '' : '<@891045460922466354>',\n    embeds: [{\n      title: title,\n      description: desc.substring(0, 4000),\n      color: isHealthy ? 3066993 : 15548997,\n      footer: { text: 'EUR+GBP | Next check in 2h' },\n      timestamp: new Date().toISOString()\n    }]\n  }\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        192
+      ],
+      "id": "54d9041a-0370-46f9-b265-a0f7f8853577",
+      "name": "📝 Format Health Alert"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255098616156340/UVEIazcilHKqnQ7dmJZyBjkbCqAgf9fyMOpHgYX_HVMkuzZ1P0Xcm7QbRqZVwVOq-mW5",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1856,
+        192
+      ],
+      "id": "33fdd361-6dea-45d3-9e2a-d6d27f1b639e",
+      "name": "💬 Discord #system-status",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const hour = new Date().toLocaleString('en-GB', { \n  hour: '2-digit', \n  hour12: false, \n  timeZone: 'Europe/Brussels' \n});\nreturn [{ json: { is_eod: parseInt(hour) === 20 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        496
+      ],
+      "id": "a4aaa31a-2fca-4e39-99fe-0e9cadccc751",
+      "name": "🕐 Is EOD Run?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "eod_check",
+              "leftValue": "={{ $json.is_eod }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1856,
+        496
+      ],
+      "id": "509901bf-9bb3-4e26-a805-a9be7456c165",
+      "name": "IF EOD?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/daily_performance_digest",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2096,
+        416
+      ],
+      "id": "49a3e356-dd26-415f-807b-b8c323fac4cc",
+      "name": "📊 Performance Digest",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/detect_system_flags",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2096,
+        576
+      ],
+      "id": "d4061883-6835-42d8-b948-d82d17e328b6",
+      "name": "🚩 Detect Flags",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const digestRaw = $('📊 Performance Digest').first().json;\nconst digest = Array.isArray(digestRaw) ? digestRaw[0] : digestRaw;\n\nconst flagsRaw = $('🚩 Detect Flags').first().json;\nconst flagsData = Array.isArray(flagsRaw) ? flagsRaw[0] : flagsRaw;\n\nconst flags = flagsData.flags || [];\nconst date = flagsData.date || new Date().toISOString().split('T')[0];\n\nreturn [{ json: {\n  flags: flags,\n  digest: digest,\n  date: date,\n  has_flags: flags.length > 0\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        496
+      ],
+      "id": "920014ad-e541-43a8-90c2-3f6317f35ead",
+      "name": "📋 Merge Digest + Flags"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the EOD Digest for Discord\nconst data = $input.first().json;\nconst d = data.digest;\nconst flags = data.flags;\nconst wk = d.week_totals;\nconst acct = d.account;\n\nlet desc = '';\n\nfor (const p of d.pairs) {\n  desc += `\\n**📍 ${p.pair}**\\n`;\n  \n  if (p.signals_today.length > 0) {\n    desc += `*Signals:* `;\n    const parts = p.signals_today.map(s => \n      `${s.strategy}: ${s.evaluated} eval (${s.taken}✓ ${s.rejected}✗ ${s.filtered}⊘)`\n    );\n    desc += parts.join(' | ') + '\\n';\n  } else {\n    desc += `*Signals:* None evaluated today\\n`;\n  }\n  \n  if (p.trades_today.length > 0) {\n    for (const t of p.trades_today) {\n      const netEmoji = t.net_r >= 0 ? '🟢' : '🔴';\n      desc += `*${t.strategy}:* ${t.wins}W/${t.losses}L = ${netEmoji} ${t.net_r > 0 ? '+' : ''}${Number(t.net_r).toFixed(1)}R (${t.net_pips > 0 ? '+' : ''}${Number(t.net_pips).toFixed(1)}p)\\n`;\n    }\n  } else {\n    desc += `*Trades:* None closed today\\n`;\n  }\n\n  if (p.trades_week.length > 0) {\n    desc += `*Week:* `;\n    const wParts = p.trades_week.map(t => {\n      const wr = t.win_rate_pct !== null ? ` ${t.win_rate_pct}%WR` : '';\n      return `${t.strategy}: ${t.net_r > 0 ? '+' : ''}${Number(t.net_r).toFixed(1)}R (${t.trades}t${wr})`;\n    });\n    desc += wParts.join(' | ') + '\\n';\n  }\n  \n  const dq = p.data_quality;\n  if (dq['5m_gaps'] > 0 || dq['1h_gaps'] > 0) {\n    desc += `⚠️ Data: ${dq['5m_gaps']} 5M gaps, ${dq['1h_gaps']} 1H gaps\\n`;\n  }\n  desc += `📈 ${dq.swings_detected_today} swings | ${dq.cisd_events_today} CISDs | ${dq.alerts_today} alerts\\n`;\n}\n\nif (wk.total_trades > 0) {\n  const netEmoji = wk.net_r >= 0 ? '🟢' : '🔴';\n  desc += `\\n**📅 Week Total:** ${wk.wins}W/${wk.losses}L = ${netEmoji} ${wk.net_r > 0 ? '+' : ''}${Number(wk.net_r).toFixed(1)}R | ${wk.win_rate_pct}% WR`;\n  desc += `\\n💰 ${wk.net_amount > 0 ? '+' : ''}$${Number(wk.net_amount).toFixed(0)} | Balance: $${Number(acct.balance).toFixed(0)}`;\n} else {\n  desc += `\\n**📅 Week Total:** No closed trades yet`;\n  desc += `\\n💰 Balance: $${Number(acct.balance).toFixed(0)}`;\n}\nif (wk.open_trades > 0) desc += ` | ${wk.open_trades} open`;\n\nconst allFilters = d.pairs.flatMap(p => \n  p.top_filter_reasons.map(f => ({ ...f, pair: p.pair }))\n);\nif (allFilters.length > 0) {\n  desc += `\\n\\n**🔍 Top Rejections (week):**\\n`;\n  const sorted = allFilters.sort((a, b) => b.count - a.count).slice(0, 5);\n  for (const f of sorted) {\n    desc += `• ${f.strategy} ${f.pair}: ${f.reason} (${f.count}x)\\n`;\n  }\n}\n\n// Add flags summary\nif (flags.length > 0) {\n  desc += `\\n**🚩 ${flags.length} Action Item(s) Detected — AI analysis generating...**\\n`;\n  for (const f of flags.slice(0, 3)) {\n    const pIcon = f.priority === 'HIGH' ? '🔴' : '🟡';\n    desc += `${pIcon} ${f.title}\\n`;\n  }\n  if (flags.length > 3) desc += `...and ${flags.length - 3} more\\n`;\n}\n\nreturn [{ json: {\n  content: '',\n  embeds: [{\n    title: `📊 Daily Digest | ${d.date}`,\n    description: desc.substring(0, 4000),\n    color: (wk.net_r || 0) >= 0 ? 3066993 : 15548997,\n    footer: { text: `Week of ${d.week_start} | Generated ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',timeZone:'UTC'})} UTC` },\n    timestamp: new Date().toISOString()\n  }]\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        416
+      ],
+      "id": "1416a305-1533-4df3-956e-bbb3fda4ee6d",
+      "name": "📝 Format Digest"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255098616156340/UVEIazcilHKqnQ7dmJZyBjkbCqAgf9fyMOpHgYX_HVMkuzZ1P0Xcm7QbRqZVwVOq-mW5",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2816,
+        416
+      ],
+      "id": "be7ac4e9-397a-4d71-88e2-c78373ba279c",
+      "name": "💬 Discord #system-status (digest)",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has_flags",
+              "leftValue": "={{ $('📋 Merge Digest + Flags').first().json.has_flags }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2576,
+        656
+      ],
+      "id": "df84a719-9cef-4d08-977d-c655cfd17177",
+      "name": "IF Has Flags?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Anthropic API request body\nconst data = $('📋 Merge Digest + Flags').first().json;\n\nconst systemPrompt = `You are the AI analyst for Fractal AI, a systematic forex trading system focused on EURUSD and GBPUSD. Your job is to turn system anomaly flags into specific, actionable items that a trader can execute immediately.\n\nContext about the system:\n- Strategies: FTLR-v2 (First Touch Level Reversal, baseline 59.5% WR at 2R), CISD-v3 (C2-Close Entry, 3R target), SCALP-v3 (Multi-TF Fractal Scalp, 2R target)\n- The system runs on N8N workflows calling PostgreSQL functions in Supabase\n- Research follows a hypothesis-first methodology with pre-registration\n- All findings are tracked as IN_SAMPLE until validated on fresh data\n- Production database tables: signal_evaluations, monitored_trades, strategy_monitor_state, ohlc_candles, detected_swings, key_levels, cisd_events, fractal_alerts\n\nFor each flag, generate a JSON object with these exact keys:\n- \"category\": One of RESEARCH_QUESTION, QUICK_FIX, INVESTIGATION, PARAMETER_TUNE, MONITORING\n- \"recommendation\": 2-3 sentences on what to do. Be specific with numbers from the flag.\n- \"pre_built_hypothesis\": If category is RESEARCH_QUESTION, write a hypothesis like: \"H-XXX: [title]. Predicted outcome: [specific prediction]. Invalidated if: [condition]\". Otherwise null.\n- \"pre_built_sql\": A specific, runnable SQL query against the production database that immediately helps investigate. Use real table names.\n- \"adversarial_questions\": Array of 2-3 strings - devil's advocate questions that challenge the obvious interpretation\n- \"estimated_effort\": String like \"15 min\", \"30 min\", \"1 session\", \"quick fix\"\n\nRespond ONLY with a valid JSON array. No markdown, no explanation, just the array.`;\n\nconst userPrompt = `Flags detected for ${data.date}:\\n${JSON.stringify(data.flags, null, 2)}\\n\\nDigest summary:\\n${JSON.stringify({\n  week_totals: data.digest.week_totals,\n  pairs: data.digest.pairs.map(p => ({\n    pair: p.pair,\n    signals_today: p.signals_today,\n    trades_today: p.trades_today,\n    trades_week: p.trades_week\n  }))\n}, null, 2)}\\n\\nGenerate one action item per flag.`;\n\nreturn [{ json: {\n  model: 'claude-sonnet-4-20250514',\n  max_tokens: 4000,\n  system: systemPrompt,\n  messages: [{ role: 'user', content: userPrompt }],\n  flags: data.flags,\n  date: data.date\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2816,
+        656
+      ],
+      "id": "b8dd0b67-c748-49ed-83d8-a9d860d7036a",
+      "name": "📋 Prep AI Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: $json.max_tokens, system: $json.system, messages: $json.messages }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3056,
+        656
+      ],
+      "id": "12a42382-551f-46fe-b88b-66a5a755318f",
+      "name": "🤖 Claude AI",
+      "credentials": {
+        "anthropicApi": {
+          "id": "drqPYnU6KHbqd12m",
+          "name": "Anthropic account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI response and write to system_action_items\nconst aiResponse = $input.first().json;\nconst prepData = $('📋 Prep AI Request').first().json;\nconst flags = prepData.flags;\nconst date = prepData.date;\n\n// Extract text from Claude response\nlet rawText = '';\nif (aiResponse.content && Array.isArray(aiResponse.content)) {\n  rawText = aiResponse.content\n    .filter(b => b.type === 'text')\n    .map(b => b.text)\n    .join('');\n} else if (aiResponse.error) {\n  // AI call failed - create basic action items from flags without AI enhancement\n  const basicItems = flags.map(f => ({\n    flag_type: f.type,\n    category: 'INVESTIGATION',\n    priority: f.priority,\n    strategy_id: f.strategy_id || null,\n    pair: f.pair || null,\n    flag_title: f.title,\n    flag_detail: f.detail,\n    recommendation: 'AI analysis unavailable. Investigate this flag manually: ' + f.detail,\n    pre_built_hypothesis: null,\n    pre_built_sql: null,\n    adversarial_questions: [],\n    estimated_effort: '30 min',\n    source_date: date,\n    status: 'NEW'\n  }));\n  return [{ json: { items: basicItems, ai_failed: true } }];\n}\n\n// Parse JSON from AI\nconst cleanText = rawText.replace(/```json\\n?|```\\n?/g, '').trim();\nlet actionItems;\ntry {\n  actionItems = JSON.parse(cleanText);\n} catch(e) {\n  // Fallback: basic items\n  const basicItems = flags.map(f => ({\n    flag_type: f.type,\n    category: 'INVESTIGATION',\n    priority: f.priority,\n    strategy_id: f.strategy_id || null,\n    pair: f.pair || null,\n    flag_title: f.title,\n    flag_detail: f.detail,\n    recommendation: 'AI parsing failed. Raw response available in logs. Investigate: ' + f.detail,\n    pre_built_hypothesis: null,\n    pre_built_sql: null,\n    adversarial_questions: [],\n    estimated_effort: '30 min',\n    source_date: date,\n    status: 'NEW'\n  }));\n  return [{ json: { items: basicItems, ai_failed: true, parse_error: e.message } }];\n}\n\n// Merge AI output with flag metadata\nconst items = actionItems.map((item, idx) => ({\n  flag_type: flags[idx]?.type || 'UNKNOWN',\n  category: item.category || 'INVESTIGATION',\n  priority: flags[idx]?.priority || 'MEDIUM',\n  strategy_id: flags[idx]?.strategy_id || null,\n  pair: flags[idx]?.pair || null,\n  flag_title: flags[idx]?.title || 'Unknown flag',\n  flag_detail: flags[idx]?.detail || '',\n  recommendation: item.recommendation || 'Review this flag.',\n  pre_built_hypothesis: item.pre_built_hypothesis || null,\n  pre_built_sql: item.pre_built_sql || null,\n  adversarial_questions: item.adversarial_questions || [],\n  estimated_effort: item.estimated_effort || '30 min',\n  source_date: date,\n  status: 'NEW'\n}));\n\nreturn [{ json: { items: items, ai_failed: false } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3296,
+        656
+      ],
+      "id": "1d6505a3-1618-41ce-bc82-57b33982efef",
+      "name": "📋 Parse AI + Build Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/system_action_items",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.items) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3536,
+        656
+      ],
+      "id": "56860f6b-cb6b-4b42-a6fc-b1452f1d7206",
+      "name": "💾 Save Action Items",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the AI-generated action items for Discord\nconst savedRaw = $input.first().json;\nconst saved = Array.isArray(savedRaw) ? savedRaw : [savedRaw];\nconst aiData = $('📋 Parse AI + Build Items').first().json;\n\nlet desc = '';\n\nif (aiData.ai_failed) {\n  desc += '⚠️ *AI analysis failed — basic items created*\\n\\n';\n}\n\nfor (const item of saved) {\n  const pIcon = item.priority === 'HIGH' ? '🔴' : item.priority === 'MEDIUM' ? '🟡' : '🟢';\n  const catIcon = {\n    'RESEARCH_QUESTION': '🔬',\n    'QUICK_FIX': '🔧',\n    'INVESTIGATION': '🔎',\n    'PARAMETER_TUNE': '⚙️',\n    'MONITORING': '👁️'\n  }[item.category] || '📋';\n  \n  desc += `${pIcon} ${catIcon} **${item.flag_title}**\\n`;\n  desc += `${item.recommendation}\\n`;\n  if (item.estimated_effort) desc += `⏱️ ${item.estimated_effort}`;\n  if (item.category === 'RESEARCH_QUESTION' && item.pre_built_hypothesis) {\n    desc += ` | 📝 Hypothesis ready`;\n  }\n  desc += '\\n\\n';\n}\n\ndesc += `*${saved.length} action item(s) saved. Open Claude to start working on them.*`;\n\nreturn [{ json: {\n  content: '',\n  embeds: [{\n    title: `🎯 Action Items | ${saved[0]?.source_date || 'Today'}`,\n    description: desc.substring(0, 4000),\n    color: 16750848,\n    footer: { text: 'Open Claude for your morning briefing' },\n    timestamp: new Date().toISOString()\n  }]\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3776,
+        656
+      ],
+      "id": "1e64710d-7aa2-4f38-b7d1-524e980959f3",
+      "name": "📝 Format Action Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255098616156340/UVEIazcilHKqnQ7dmJZyBjkbCqAgf9fyMOpHgYX_HVMkuzZ1P0Xcm7QbRqZVwVOq-mW5",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4016,
+        656
+      ],
+      "id": "54edbaa0-f16e-4266-a98d-a57ddac96c95",
+      "name": "💬 Discord #system-status (actions)",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "⏰ Every 2h (Mon-Fri trading)": {
+      "main": [
+        [
+          {
+            "node": "🏥 Health Check All Pairs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🏥 Health Check All Pairs": {
+      "main": [
+        [
+          {
+            "node": "📝 Format Health Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Format Health Alert": {
+      "main": [
+        [
+          {
+            "node": "💬 Discord #system-status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Discord #system-status": {
+      "main": [
+        [
+          {
+            "node": "🕐 Is EOD Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🕐 Is EOD Run?": {
+      "main": [
+        [
+          {
+            "node": "IF EOD?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF EOD?": {
+      "main": [
+        [
+          {
+            "node": "📊 Performance Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Performance Digest": {
+      "main": [
+        [
+          {
+            "node": "🚩 Detect Flags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚩 Detect Flags": {
+      "main": [
+        [
+          {
+            "node": "📋 Merge Digest + Flags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Merge Digest + Flags": {
+      "main": [
+        [
+          {
+            "node": "📝 Format Digest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Has Flags?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Format Digest": {
+      "main": [
+        [
+          {
+            "node": "💬 Discord #system-status (digest)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Has Flags?": {
+      "main": [
+        [
+          {
+            "node": "📋 Prep AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Prep AI Request": {
+      "main": [
+        [
+          {
+            "node": "🤖 Claude AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Claude AI": {
+      "main": [
+        [
+          {
+            "node": "📋 Parse AI + Build Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Parse AI + Build Items": {
+      "main": [
+        [
+          {
+            "node": "💾 Save Action Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Save Action Items": {
+      "main": [
+        [
+          {
+            "node": "📝 Format Action Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Format Action Items": {
+      "main": [
+        [
+          {
+            "node": "💬 Discord #system-status (actions)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "ZXiIfbwA3d00Lai2XTM8G"
+  },
+  "versionId": "06e05454-409d-4001-932c-3f3d5b2c19eb",
+  "meta": {
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "YQ4j-rA4s5Wp7ACtCTjOW",
+  "tags": []
+}

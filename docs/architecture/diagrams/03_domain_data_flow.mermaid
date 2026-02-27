@@ -1,0 +1,88 @@
+---
+title: "Fractal AI — Domain Data Flow"
+---
+flowchart LR
+    subgraph Market["📊 MARKET DATA"]
+        direction TB
+        RAW["Raw Candle\n(TwelveData)"]
+        VAL["Validated Candle\n(Gaps checked,\ndupes removed)"]
+        RAW --> VAL
+    end
+
+    subgraph Structure["🔍 STRUCTURE DETECTION"]
+        direction TB
+        SW["Swing\nHIGH / LOW\nC2 / C3 closure"]
+        LV["Key Level\nSession H/L\nPDH/PDL, PWH/PWL"]
+        PT["Pattern\nSwing Point\nFirst Touch\nSweep status"]
+        CI["CISD Event\nSeries count\nDirection"]
+        SW --> PT
+        LV --> PT
+    end
+
+    subgraph Strategy["🎯 STRATEGY EVALUATION"]
+        direction TB
+        CFG["Strategy Config\n(JSON)"]
+        FLT["Hard Filters\n✓ / ✗ each rule"]
+        SCR["Score (0-100)\nQuality rating"]
+        SIG["Signal\nTAKEN / REJECTED\nwith risk tier"]
+        CFG --> FLT
+        FLT -->|"All pass"| SCR
+        SCR --> SIG
+    end
+
+    subgraph Execution["💰 TRADE EXECUTION"]
+        direction TB
+        TRD["Trade\nEntry, SL, TP"]
+        RSK["Risk Check\nPosition size\nPortfolio exposure"]
+        MON["Monitor\nSL/TP/Expiry\nCounter-CISD"]
+        OUT["Outcome\nWIN / LOSS /\nEXPIRED"]
+        RSK --> TRD
+        TRD --> MON
+        MON --> OUT
+    end
+
+    subgraph Research["🔬 RESEARCH"]
+        direction TB
+        HYP["Hypothesis\n(Pre-registered)"]
+        FND["Finding\n(Evidence)"]
+        CON["Conclusion\n(Synthesis)"]
+        RUL["Rule\n(Actionable)"]
+        HYP --> FND
+        FND --> CON
+        CON --> RUL
+    end
+
+    subgraph Observe["👁 OBSERVABILITY"]
+        direction TB
+        LOG["Structured Logs"]
+        MET["Metrics"]
+        ART["Trade Autopsy"]
+        ALT["Discord Alert"]
+    end
+
+    %% Main flow (events)
+    VAL -->|"CandleClosed"| Structure
+    SW -->|"SwingDetected"| Strategy
+    CI -->|"CISDDetected"| Strategy
+    PT -->|"PatternFormed"| Strategy
+    SIG -->|"SignalGenerated"| RSK
+    OUT -->|"TradeClosed"| ART
+
+    %% Research feedback loop
+    RUL -.->|"Promotes to\nstrategy config"| CFG
+    ART -.->|"Feeds\nlearning loop"| Research
+    OUT -.->|"Monthly\nre-validation"| Research
+
+    %% Observability listens to everything
+    SIG -.-> ALT
+    TRD -.-> ALT
+    OUT -.-> ALT
+    MON -.-> LOG
+    SIG -.-> MET
+
+    style Market fill:#e3f2fd,stroke:#42a5f5
+    style Structure fill:#e8f5e9,stroke:#66bb6a
+    style Strategy fill:#fff3e0,stroke:#ffa726
+    style Execution fill:#fce4ec,stroke:#ef5350
+    style Research fill:#f3e5f5,stroke:#ab47bc
+    style Observe fill:#e0f2f1,stroke:#26a69a

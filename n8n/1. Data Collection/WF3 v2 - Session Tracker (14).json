@@ -1,0 +1,1292 @@
+{
+  "name": "WF3 v2 - Session Tracker",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 8 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "a54b475d-a00e-4ce0-bf06-8cd26852bb32",
+      "name": "⏰ Asia Close (08:05 UTC)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2112,
+        384
+      ],
+      "notes": "Fires 5 min after ASIA session closes at 08:00 UTC"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 13 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "5c3874b5-6883-40b5-a3f3-113d4c52ed3f",
+      "name": "⏰ London Close (13:05 UTC)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2112,
+        592
+      ],
+      "notes": "Fires 5 min after LONDON session closes at 13:00 UTC"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 22 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "69acced1-20a2-4941-9627-9c9e33bd8d80",
+      "name": "⏰ NY Close (22:05 UTC)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2112,
+        800
+      ],
+      "notes": "Fires 5 min after NEW_YORK session closes at 22:00 UTC"
+    },
+    {
+      "parameters": {},
+      "id": "1a3c9a1b-33aa-42ea-bd19-feba7901ee64",
+      "name": "▶️ Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2112,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// DETERMINE SESSION - UTC BASED\n// ============================================\n//const now = new Date();\nconst now = new Date();\nconst utcHour = now.getUTCHours();\nconst utcMinute = now.getUTCMinutes();\n\n// Session definitions (UTC - NEVER CHANGE THESE)\nconst SESSIONS = {\n  ASIA: { start: 0, end: 8 },      // 00:00 - 08:00 UTC\n  LONDON: { start: 8, end: 13 },   // 08:00 - 13:00 UTC\n  NEW_YORK: { start: 13, end: 22 } // 13:00 - 22:00 UTC\n};\n\n// Expected 5M candles per session\nconst EXPECTED_CANDLES = {\n  ASIA: 96,      // 8 hours × 12 candles/hour\n  LONDON: 60,    // 5 hours × 12 candles/hour\n  NEW_YORK: 108  // 9 hours × 12 candles/hour\n};\n\n// Determine which session just closed based on current UTC hour\nlet session;\nlet sessionStartUTC;\nlet sessionEndUTC;\n\n// We trigger 5 min after close, so check which session ended\nif (utcHour === 8 || (utcHour === 8 && utcMinute <= 10)) {\n  session = 'ASIA';\n  sessionStartUTC = 0;\n  sessionEndUTC = 8;\n} else if (utcHour === 13 || (utcHour === 13 && utcMinute <= 10)) {\n  session = 'LONDON';\n  sessionStartUTC = 8;\n  sessionEndUTC = 13;\n} else if (utcHour === 22 || (utcHour === 22 && utcMinute <= 10)) {\n  session = 'NEW_YORK';\n  sessionStartUTC = 13;\n  sessionEndUTC = 22;\n} else {\n  // Fallback: determine by current hour\n  if (utcHour >= 0 && utcHour < 8) {\n    session = 'ASIA';\n    sessionStartUTC = 0;\n    sessionEndUTC = 8;\n  } else if (utcHour >= 8 && utcHour < 13) {\n    session = 'LONDON';\n    sessionStartUTC = 8;\n    sessionEndUTC = 13;\n  } else {\n    session = 'NEW_YORK';\n    sessionStartUTC = 13;\n    sessionEndUTC = 22;\n  }\n}\n\n// Build UTC timestamps for the session\nconst today = now.toISOString().split('T')[0];\n\nconst sessionStart = new Date(now);\nsessionStart.setUTCHours(sessionStartUTC, 0, 0, 0);\n\nconst sessionEnd = new Date(now);\nsessionEnd.setUTCHours(sessionEndUTC, 0, 0, 0);\n\n// Get expected candle count\nconst expectedCandles = EXPECTED_CANDLES[session];\n\nconsole.log(`Session: ${session}`);\nconsole.log(`Start: ${sessionStart.toISOString()}`);\nconsole.log(`End: ${sessionEnd.toISOString()}`);\nconsole.log(`Expected 5M candles: ${expectedCandles}`);\n\n// Return both pairs with UTC timestamps\nreturn [\n  {\n    json: {\n      pair: 'EURUSD',\n      symbol: 'EUR/USD',\n      session: session,\n      date: today,\n      session_start: sessionStart.toISOString(),\n      session_end: sessionEnd.toISOString(),\n      session_start_hour: sessionStartUTC,\n      session_end_hour: sessionEndUTC,\n      expected_candles: expectedCandles,\n      timezone: 'UTC',\n      triggered_at: now.toISOString()\n    }\n  },\n  {\n    json: {\n      pair: 'GBPUSD',\n      symbol: 'GBP/USD',\n      session: session,\n      date: today,\n      session_start: sessionStart.toISOString(),\n      session_end: sessionEnd.toISOString(),\n      session_start_hour: sessionStartUTC,\n      session_end_hour: sessionEndUTC,\n      expected_candles: expectedCandles,\n      timezone: 'UTC',\n      triggered_at: now.toISOString()\n    }\n  }\n];"
+      },
+      "id": "2b70db51-c418-4de4-99e1-682177fa476e",
+      "name": "1️⃣ Determine Session",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1824,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/ohlc_candles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "pair,open_time,open,high,low,close"
+            },
+            {
+              "name": "pair",
+              "value": "=eq.{{ $json.pair }}"
+            },
+            {
+              "name": "timeframe",
+              "value": "eq.5M"
+            },
+            {
+              "name": "and",
+              "value": "=(open_time.gte.{{ $json.session_start }},open_time.lt.{{ $json.session_end }})"
+            },
+            {
+              "name": "order",
+              "value": "open_time.asc"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cf2ba154-7341-4838-be5b-6a39e9fb2167",
+      "name": "2️⃣ Fetch Session 5M Candles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1584,
+        592
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHECK DATA COMPLETENESS & CALCULATE SESSION OHLC\n// ============================================\n// Processes candles for ALL pairs and outputs one item per pair\n// ============================================\n\n// Get session info for both pairs\nconst sessionItems = $('1️⃣ Determine Session').all();\nconst allCandles = $input.all().map(item => item.json).filter(c => c.open_time);\n\nconsole.log(`Total candles received: ${allCandles.length}`);\n\n// Group candles by pair\nconst candlesByPair = {};\nfor (const candle of allCandles) {\n  const pair = candle.pair;\n  if (!candlesByPair[pair]) {\n    candlesByPair[pair] = [];\n  }\n  candlesByPair[pair].push(candle);\n}\n\nconsole.log('Pairs found:', Object.keys(candlesByPair));\n\n// Process each pair\nconst results = [];\n\nfor (const sessionItem of sessionItems) {\n  const sessionInfo = sessionItem.json;\n  const pair = sessionInfo.pair;\n  const candles = candlesByPair[pair] || [];\n  \n  console.log(`${pair}: ${candles.length} candles`);\n  \n  const actualCount = candles.length;\n  const expectedCount = sessionInfo.expected_candles;\n  const completenessRatio = expectedCount > 0 ? actualCount / expectedCount : 0;\n  const isComplete = completenessRatio >= 0.95;\n  \n  // Determine data status\n  let dataStatus;\n  if (actualCount === 0) {\n    dataStatus = 'NO_DATA';\n  } else if (!isComplete) {\n    dataStatus = 'INCOMPLETE_DATA';\n  } else {\n    dataStatus = 'COMPLETE';\n  }\n  \n  // Calculate Session OHLC if we have data\n  let sessionOHLC = {};\n  if (candles.length > 0) {\n    // Sort candles by time ASCENDING\n    candles.sort((a, b) => new Date(a.open_time) - new Date(b.open_time));\n    \n    const sessionOpen = candles[0].open;\n    const sessionClose = candles[candles.length - 1].close;\n    const sessionHigh = Math.max(...candles.map(c => c.high));\n    const sessionLow = Math.min(...candles.map(c => c.low));\n    \n    const pipMultiplier = pair.includes('JPY') ? 100 : 10000;\n    const sessionRangePips = Math.round((sessionHigh - sessionLow) * pipMultiplier * 10) / 10;\n    const sessionEquilibrium = Math.round((sessionLow + (sessionHigh - sessionLow) / 2) * 100000) / 100000;\n    \n    sessionOHLC = {\n      session_open: sessionOpen,\n      session_high: sessionHigh,\n      session_low: sessionLow,\n      session_close: sessionClose,\n      session_range_pips: sessionRangePips,\n      session_equilibrium: sessionEquilibrium\n    };\n    \n    console.log(`${pair} OHLC: O=${sessionOpen}, H=${sessionHigh}, L=${sessionLow}, C=${sessionClose}`);\n  }\n  \n  results.push({\n    json: {\n      // Pass through session info\n      pair: pair,\n      session: sessionInfo.session,\n      date: sessionInfo.date,\n      session_start: sessionInfo.session_start,\n      session_end: sessionInfo.session_end,\n      expected_candles: expectedCount,\n      \n      // Completeness info\n      actual_candles: actualCount,\n      completeness_ratio: Math.round(completenessRatio * 100),\n      is_complete: isComplete,\n      data_status: dataStatus,\n      needs_backfill: dataStatus !== 'COMPLETE',\n      \n      // Session OHLC\n      ...sessionOHLC,\n      has_data: candles.length > 0\n    }\n  });\n}\n\nconsole.log(`Outputting ${results.length} items`);\nreturn results;"
+      },
+      "id": "d9870c4f-b48c-41dc-bf30-71967badae90",
+      "name": "3️⃣ Check Completeness & Calculate OHLC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "needs-backfill",
+              "leftValue": "={{ $json.needs_backfill }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b0b62a9b-24cb-407e-a04c-e9dac03ffe06",
+      "name": "Needs Backfill?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -896,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE BACKFILL REQUEST\n// ============================================\nconst data = $input.first().json;\n\nconsole.log(`⚠️ ${data.pair} ${data.session} needs backfill: ${data.backfill_reason}`);\nconsole.log(`   Missing ${data.missing_candles} candles`);\n\n// Format dates for TwelveData API\nconst startDate = data.session_start.split('T')[0];\nconst endDate = data.session_end.split('T')[0];\n\nlet symbol;\n\nif (data.pair === \"EURUSD\"){\n  symbol = \"EUR/USD\";\n} else {\n  symbol = \"GBP/USD\";\n}\n\nreturn {\n  json: {\n    // Backfill config\n    pair: symbol,  // EUR/USD format for TwelveData\n    pairEnum: data.pair,\n    interval: '5min',\n    dbTimeframe: '5M',\n    startDate: startDate,\n    endDate: endDate,\n    outputsize: data.expected_candles,\n    apiKey: 'd9d8976ee9a54997a9b32b5afffa9be0',\n    isTestData: false,\n    \n    // Original session info for later\n    session: data.session,\n    session_start: data.session_start,\n    session_end: data.session_end,\n    expected_candles: data.expected_candles,\n    triggered_at: data.triggered_at\n  }\n};"
+      },
+      "id": "5af2013c-3f81-485b-8532-a61f3882d7f6",
+      "name": "⚠️ Prepare Backfill",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.twelvedata.com/time_series?symbol={{ $json.pair }}&interval={{ $json.interval }}&start_date={{ $json.session_start }}&end_date={{ $json.session_end }}&outputsize={{ $json.outputsize }}&timezone=UTC&apikey={{ $json.apiKey }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 8000
+            }
+          }
+        }
+      },
+      "id": "23fe621b-5824-46b4-a622-d42c486c463a",
+      "name": "📡 Fetch from TwelveData",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -416,
+        480
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF3 - TRANSFORM TWELVEDATA BACKFILL RESPONSE\n// ============================================\n\nconst items = $input.all();\nconst sessionInfo = $('⚠️ Prepare Backfill').first().json;\n\nconst allCandles = [];\n\nfor (const item of items) {\n  const response = item.json;\n  \n  if (response.status === 'error' || !response.values) {\n    console.log('Error or no data for request:', JSON.stringify(response));\n    continue;\n  }\n  \n  const meta = response.meta;\n  const values = response.values;\n  \n  const pair = meta.symbol.replace('/', '');\n  const interval = meta.interval;\n  const timeframeClean = interval === '5min' ? '5M' : interval === '1h' ? '1H' : 'D';\n  \n  function getSession(hour) {\n    if (hour >= 0 && hour < 8) return 'ASIA';\n    if (hour >= 8 && hour < 13) return 'LONDON';\n    if (hour >= 13 && hour < 22) return 'NY';\n    return 'OFF_HOURS';\n  }\n  \n  for (const candle of values) {\n    const open = parseFloat(candle.open);\n    const high = parseFloat(candle.high);\n    const low = parseFloat(candle.low);\n    const close = parseFloat(candle.close);\n    \n    const pipMultiplier = 10000;\n    const rangePips = Math.round((high - low) * pipMultiplier * 10) / 10;\n    const bodyPips = Math.round(Math.abs(close - open) * pipMultiplier * 10) / 10;\n    const isBullish = close > open;\n    \n    const openTime = new Date(candle.datetime.replace(' ', 'T') + 'Z');\n    \n    let closeTime;\n    if (interval === '5min') {\n      closeTime = new Date(openTime.getTime() + 5 * 60 * 1000);\n    } else if (interval === '1h') {\n      closeTime = new Date(openTime.getTime() + 60 * 60 * 1000);\n    } else {\n      closeTime = new Date(openTime.getTime() + 24 * 60 * 60 * 1000);\n    }\n    \n    const tradingDate = candle.datetime.split(' ')[0];\n    const hour = openTime.getUTCHours();\n    \n    allCandles.push({\n      pair: pair,\n      timeframe: timeframeClean,\n      open_time: openTime.toISOString(),\n      close_time: closeTime.toISOString(),\n      open: open,\n      high: high,\n      low: low,\n      close: close,\n      range_pips: rangePips,\n      body_pips: bodyPips,\n      is_bullish: isBullish,\n      session: getSession(hour),\n      trading_date: tradingDate\n    });\n  }\n}\n\n// CRITICAL: Sort candles by time ASCENDING before returning\nallCandles.sort((a, b) => new Date(a.open_time) - new Date(b.open_time));\n\nconsole.log('Transformed ' + allCandles.length + ' candles');\n\nreturn [{\n  json: {\n    success: allCandles.length > 0,\n    count: allCandles.length,\n    message: allCandles.length > 0 \n      ? 'Transformed ' + allCandles.length + ' candles'\n      : 'No candles to process',\n    candles: allCandles,\n    pair: sessionInfo.pairEnum || sessionInfo.pair.replace('/', ''),\n    session: sessionInfo.session,\n    session_start: sessionInfo.session_start,\n    session_end: sessionInfo.session_end,\n    expected_candles: sessionInfo.expected_candles\n  }\n}];"
+      },
+      "id": "380ee375-d14d-41ab-82a6-2e4756348caa",
+      "name": "🔄 Transform Backfill",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has-backfill-candles",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6b69d906-164c-4aca-8bcd-980af11dabde",
+      "name": "Has Backfill Candles?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        64,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/ohlc_candles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "pair,timeframe,open_time"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.candles) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "b37331a1-d053-4d05-8fe0-6afd793184da",
+      "name": "💾 Store Backfill Candles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        304,
+        384
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// RECALCULATE SESSION OHLC FROM BACKFILLED DATA\n// ============================================\n\nconst backfillResult = $('🔄 Transform Backfill').first().json;\n\nconsole.log('✅ Backfill result:', JSON.stringify({\n  count: backfillResult.count,\n  pair: backfillResult.pair,\n  hasCandles: (backfillResult.candles || []).length\n}));\n\nconst candles = backfillResult.candles || [];\n\nif (candles.length === 0) {\n  return {\n    json: {\n      pair: backfillResult.pair,\n      session: backfillResult.session,\n      session_start: backfillResult.session_start,\n      session_end: backfillResult.session_end,\n      has_data: false,\n      backfill_success: false,\n      backfill_count: 0\n    }\n  };\n}\n\n// Candles are already sorted ascending from Transform node\n// But let's ensure it just in case\ncandles.sort((a, b) => new Date(a.open_time) - new Date(b.open_time));\n\n// Session Open = FIRST candle's open price\n// Session Close = LAST candle's close price\nconst sessionOpen = candles[0].open;\nconst sessionClose = candles[candles.length - 1].close;\nconst sessionHigh = Math.max(...candles.map(c => c.high));\nconst sessionLow = Math.min(...candles.map(c => c.low));\n\nconst pair = backfillResult.pair;\nconst pipMultiplier = pair.includes('JPY') ? 100 : 10000;\nconst sessionRangePips = Math.round((sessionHigh - sessionLow) * pipMultiplier * 10) / 10;\nconst sessionEquilibrium = Math.round((sessionLow + (sessionHigh - sessionLow) / 2) * 100000) / 100000;\n\nreturn {\n  json: {\n    pair: backfillResult.pair,\n    session: backfillResult.session,\n    date: backfillResult.session_start.split('T')[0],\n    session_start: backfillResult.session_start,\n    session_end: backfillResult.session_end,\n    has_data: true,\n    backfill_success: true,\n    backfill_count: candles.length,\n    \n    session_open: sessionOpen,\n    session_high: sessionHigh,\n    session_low: sessionLow,\n    session_close: sessionClose,\n    session_range_pips: sessionRangePips,\n    session_equilibrium: sessionEquilibrium\n  }\n};"
+      },
+      "id": "8063f940-d45a-4329-8c88-87e587365f3d",
+      "name": "📊 Recalculate OHLC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log backfill failure\nconst data = $input.first().json;\n\nconsole.log(`❌ Backfill failed for ${data.pair} ${data.session}`);\nconsole.log(`   Error: ${data.error || 'No candles returned'}`);\n\nreturn {\n  json: {\n    pair: data.pair,\n    session: data.session,\n    has_data: false,\n    backfill_success: false,\n    error: data.error || 'No candles from TwelveData'\n  }\n};"
+      },
+      "id": "cc6d1914-605b-4dfb-add1-03d6f78723f7",
+      "name": "❌ Log Backfill Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        640
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "4f45ef5a-4ac4-43eb-aee6-41a1cba2a75f",
+      "name": "🔀 Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        544,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHECK SWEEPS - Holistic Key Level Sweep Detection\n// ============================================\n// Processes ALL pairs from Merge Results\n// ============================================\n\n// Get ALL session data from Merge Results\nconst allOhlcItems = $('🔀 Merge Results').all();\nconst allKeyLevelsRaw = $('Get Key Levels').all().map(item => item.json);\n\n// Flatten key levels if needed\nlet allKeyLevels = [];\nfor (const item of allKeyLevelsRaw) {\n  if (Array.isArray(item)) {\n    allKeyLevels = allKeyLevels.concat(item);\n  } else if (item && item.level_type) {\n    allKeyLevels.push(item);\n  }\n}\n\nconsole.log(`Processing ${allOhlcItems.length} pairs`);\nconsole.log(`Total key levels available: ${allKeyLevels.length}`);\n\nconst now = new Date().toISOString();\n\n// Helper functions\nfunction isHighLevel(levelType) {\n  return levelType.includes('HIGH') || levelType === 'PDH';\n}\n\nfunction isLowLevel(levelType) {\n  return levelType.includes('LOW') || levelType === 'PDL';\n}\n\n// Process each pair\nconst results = [];\n\nfor (const ohlcItem of allOhlcItems) {\n  const ohlcData = ohlcItem.json;\n  const pair = ohlcData.pair;\n  const sessionName = ohlcData.session;\n  const today = ohlcData.date;\n  \n  const sessionHigh = parseFloat(ohlcData.session_high);\n  const sessionLow = parseFloat(ohlcData.session_low);\n  \n  console.log(`\\nChecking sweeps for ${pair} ${sessionName}`);\n  console.log(`  Session H: ${sessionHigh}, L: ${sessionLow}`);\n  \n  // Filter key levels for THIS pair and TODAY\n  const activeLevels = allKeyLevels.filter(l => \n    l.status === 'ACTIVE' && \n    l.pair === pair && \n    l.date === today\n  );\n  \n  console.log(`  Found ${activeLevels.length} active levels for ${pair}`);\n  \n  // Check each level for sweep\n  const sweptLevels = [];\n  const levelResults = {};\n  \n  for (const level of activeLevels) {\n    const price = parseFloat(level.price);\n    const levelType = level.level_type;\n    \n    let swept = false;\n    let sweepPrice = null;\n    let sweepDepthPips = null;\n    \n    if (isHighLevel(levelType) && sessionHigh > price) {\n      swept = true;\n      sweepPrice = sessionHigh;\n      sweepDepthPips = Math.round((sessionHigh - price) * 10000) / 10;\n      console.log(`  ✓ SWEPT ${levelType}: ${price} (depth: ${sweepDepthPips} pips)`);\n    }\n    \n    if (isLowLevel(levelType) && sessionLow < price) {\n      swept = true;\n      sweepPrice = sessionLow;\n      sweepDepthPips = Math.round((price - sessionLow) * 10000) / 10;\n      console.log(`  ✓ SWEPT ${levelType}: ${price} (depth: ${sweepDepthPips} pips)`);\n    }\n    \n    levelResults[levelType] = {\n      swept,\n      price,\n      sweepPrice,\n      sweepDepthPips,\n      levelId: level.id\n    };\n    \n    if (swept) {\n      sweptLevels.push({\n        id: level.id,\n        level_type: levelType,\n        original_price: price,\n        status: 'SWEPT',\n        swept_time: now,\n        swept_price: sweepPrice,\n        swept_by_session: sessionName,\n        sweep_depth_pips: sweepDepthPips\n      });\n    }\n  }\n  \n  // Build sweep summary\n  const sweptTypes = sweptLevels.map(l => l.level_type);\n  \n  const sweep_summary = {\n    levels_swept: sweptTypes,\n    sweep_count: sweptTypes.length,\n    level_results: levelResults,\n    swept_pdh: sweptTypes.includes('PDH'),\n    swept_pdl: sweptTypes.includes('PDL'),\n    swept_asia_high: sweptTypes.includes('ASIA_HIGH'),\n    swept_asia_low: sweptTypes.includes('ASIA_LOW'),\n    swept_london_high: sweptTypes.includes('LONDON_HIGH'),\n    swept_london_low: sweptTypes.includes('LONDON_LOW'),\n    htf_level_reached: sweptTypes.includes('PDH') || sweptTypes.includes('PDL'),\n    both_asia_sides_swept: sweptTypes.includes('ASIA_HIGH') && sweptTypes.includes('ASIA_LOW'),\n    both_london_sides_swept: sweptTypes.includes('LONDON_HIGH') && sweptTypes.includes('LONDON_LOW'),\n    session: sessionName,\n    session_high: sessionHigh,\n    session_low: sessionLow,\n    calculated_at: now\n  };\n  \n  console.log(`  Summary: PDH=${sweep_summary.swept_pdh}, PDL=${sweep_summary.swept_pdl}, Total=${sweptTypes.length}`);\n  \n  // Add result for this pair\n  results.push({\n    json: {\n      // Session info\n      pair: pair,\n      session: sessionName,\n      date: today,\n      session_start: ohlcData.session_start,\n      session_end: ohlcData.session_end,\n      \n      // Session OHLC\n      session_open: ohlcData.session_open,\n      session_high: ohlcData.session_high,\n      session_low: ohlcData.session_low,\n      session_close: ohlcData.session_close,\n      session_range_pips: ohlcData.session_range_pips,\n      session_equilibrium: ohlcData.session_equilibrium,\n      \n      // Data status\n      has_data: ohlcData.has_data,\n      is_complete: ohlcData.is_complete,\n      actual_candles: ohlcData.actual_candles,\n      expected_candles: ohlcData.expected_candles,\n      \n      // Sweep results\n      swept_pdh: sweep_summary.swept_pdh,\n      swept_pdl: sweep_summary.swept_pdl,\n      sweep_summary: sweep_summary,\n      \n      // For key level updates\n      levels_to_update: sweptLevels,\n      has_levels_to_update: sweptLevels.length > 0\n    }\n  });\n}\n\nconsole.log(`\\nOutputting ${results.length} items`);\nreturn results;"
+      },
+      "id": "e076300c-503b-4580-a304-cc9a65b24c22",
+      "name": "5️⃣ Check Sweeps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/session_data",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "date,pair,session"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"date\": \"{{ $json.date }}\",\n  \"pair\": \"{{ $json.pair }}\",\n  \"session\": \"{{ $json.session }}\",\n  \"session_open\": {{ $json.session_open ?? 'null' }},\n  \"session_high\": {{ $json.session_high ?? 'null' }},\n  \"session_low\": {{ $json.session_low ?? 'null' }},\n  \"session_close\": {{ $json.session_close ?? 'null' }},\n  \"session_open_time\": \"{{ $json.session_start }}\",\n  \"session_close_time\": \"{{ $json.session_end }}\",\n  \"session_range_pips\": {{ $json.session_range_pips ?? 'null' }},\n  \"session_equilibrium\": {{ $json.session_equilibrium ?? 'null' }},\n  \"swept_pdh\": {{ $json.swept_pdh ?? false }},\n  \"swept_pdl\": {{ $json.swept_pdl ?? false }},\n  \"sweep_summary\": {{ JSON.stringify($json.sweep_summary) }},\n  \"is_complete\": true\n}",
+        "options": {}
+      },
+      "id": "f156cae4-7856-4cc5-a97d-bfa2187dd298",
+      "name": "6️⃣ Upsert Session Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -912,
+        1168
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CREATE SESSION KEY LEVELS\n// ============================================\nconst data = $input.first().json;\n\n// Check if we have actual OHLC data (not the has_data flag)\nconst hasValidData = data.session_high && data.session_low && data.session;\n\nif (!hasValidData) {\n  console.log(`⚠️ Skipping key levels for ${data.pair || 'UNKNOWN'} - no valid session data`);\n  return { json: { ...data, levels_to_create: [] } };\n}\n\nconst session = data.session;\nconst levels = [];\n\n// Determine if levels are tradeable based on session\nconst isTradeable = session !== 'ASIA';\n\n// HIGH level\nlevels.push({\n  date: data.date,\n  pair: data.pair,\n  level_type: `${session}_HIGH`,\n  price: data.session_high,\n  time_formed: data.session_close_time || data.session_end || new Date().toISOString(),\n  status: 'ACTIVE',\n  is_tradeable: isTradeable,\n  expected_direction: 'BEARISH'\n});\n\n// LOW level\nlevels.push({\n  date: data.date,\n  pair: data.pair,\n  level_type: `${session}_LOW`,\n  price: data.session_low,\n  time_formed: data.session_close_time || data.session_end || new Date().toISOString(),\n  status: 'ACTIVE',\n  is_tradeable: isTradeable,\n  expected_direction: 'BULLISH'\n});\n\nconsole.log(`Creating ${levels.length} key levels for ${data.pair} ${session}`);\nconsole.log(`  ${session}_HIGH: ${data.session_high}`);\nconsole.log(`  ${session}_LOW: ${data.session_low}`);\n\nreturn {\n  json: {\n    ...data,\n    levels_to_create: levels\n  }\n};"
+      },
+      "id": "6b28feb7-0078-4107-8b35-0f064a7a8828",
+      "name": "7️⃣ Prepare Key Levels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/key_levels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "date,pair,level_type"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.levels_to_create) }}",
+        "options": {}
+      },
+      "id": "e1e740c0-ad4e-4946-b832-86ea5b09d559",
+      "name": "💾 Create Key Levels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -448,
+        1168
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// 📊 FINAL SUMMARY - Process ALL pairs\n// ============================================\n\n// Get session info\nconst sessionInfo = $('1️⃣ Determine Session').first().json;\nconst sessionName = sessionInfo.session;\nconst today = sessionInfo.date;\n\nconsole.log(`Final Summary for ${sessionName} on ${today}`);\n\n// ============================================\n// PARSE SESSION DATA FROM DB\n// ============================================\nconst sessionDataRaw = $('4️⃣ Get Session Data').all();\nlet sessionRecords = [];\n\nfor (const item of sessionDataRaw) {\n  const data = item.json;\n  if (Array.isArray(data)) {\n    sessionRecords = sessionRecords.concat(data);\n  } else if (data && data.pair) {\n    sessionRecords.push(data);\n  }\n}\n\nconsole.log(`Session records found: ${sessionRecords.length}`);\nconsole.log(`Pairs: ${sessionRecords.map(r => r.pair).join(', ')}`);\n\n// ============================================\n// PARSE KEY LEVELS FROM DB\n// ============================================\nconst keyLevelsRaw = $('Get All Key Levels').all();\nlet allKeyLevels = [];\n\nfor (const item of keyLevelsRaw) {\n  const data = item.json;\n  if (Array.isArray(data)) {\n    allKeyLevels = allKeyLevels.concat(data);\n  } else if (data && data.level_type) {\n    allKeyLevels.push(data);\n  }\n}\n\n// Filter to today only\nallKeyLevels = allKeyLevels.filter(l => l.date === today);\n\nconsole.log(`Key levels found: ${allKeyLevels.length}`);\n\n// ============================================\n// CONFIGURATION & HELPERS\n// ============================================\nconst sessionConfig = {\n  'ASIA': { emoji: '🌏', start: '00:00', end: '08:00' },\n  'LONDON': { emoji: '🇬🇧', start: '08:00', end: '13:00' },\n  'NEW_YORK': { emoji: '🇺🇸', start: '13:00', end: '22:00' }\n};\nconst config = sessionConfig[sessionName] || { emoji: '📊', start: '??', end: '??' };\n\nfunction formatPrice(price, pair) {\n  if (price === null || price === undefined) return 'N/A';\n  const num = Number(price);\n  if (isNaN(num)) return 'N/A';\n  return num.toFixed(pair && pair.includes('JPY') ? 3 : 5);\n}\n\nfunction getLevelEmoji(levelType) {\n  if (!levelType) return '🎯';\n  const t = levelType.toUpperCase();\n  if (t === 'PDH') return '📈';\n  if (t === 'PDL') return '📉';\n  if (t.includes('ASIA') && t.includes('HIGH')) return '🌏⬆️';\n  if (t.includes('ASIA') && t.includes('LOW')) return '🌏⬇️';\n  if (t.includes('LONDON') && t.includes('HIGH')) return '🇬🇧⬆️';\n  if (t.includes('LONDON') && t.includes('LOW')) return '🇬🇧⬇️';\n  if ((t.includes('NY') || t.includes('NEW_YORK')) && t.includes('HIGH')) return '🇺🇸⬆️';\n  if ((t.includes('NY') || t.includes('NEW_YORK')) && t.includes('LOW')) return '🇺🇸⬇️';\n  return '🎯';\n}\n\nfunction getSweepDirection(data) {\n  const sweptPdh = data.swept_pdh;\n  const sweptPdl = data.swept_pdl;\n  let sweepSummary = data.sweep_summary || {};\n  if (typeof sweepSummary === 'string') {\n    try { sweepSummary = JSON.parse(sweepSummary); } catch(e) {}\n  }\n  \n  if (sweepSummary.both_asia_sides_swept) return { text: 'S&D WARNING', emoji: '⚠️' };\n  if (sweptPdh && sweptPdl) return { text: 'BOTH SIDES', emoji: '↔️' };\n  if (sweptPdh) return { text: 'BEARISH SETUP', emoji: '🔴' };\n  if (sweptPdl) return { text: 'BULLISH SETUP', emoji: '🟢' };\n  return { text: 'NO HTF SWEEP', emoji: '➖' };\n}\n\n// ============================================\n// BUILD MESSAGE\n// ============================================\nconst dateFormatted = new Date(today + 'T12:00:00Z').toLocaleDateString('en-GB', {\n  weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'\n});\n\nlet msg = `${config.emoji} **${sessionName} SESSION COMPLETE**\\n`;\nmsg += `📅 ${dateFormatted}  |  ⏰ ${config.start} - ${config.end} UTC\\n`;\nmsg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n\\n`;\n\nif (sessionRecords.length === 0) {\n  msg += `❌ **No session data found**\\n`;\n  msg += `Check that Upsert completed for both pairs.\\n`;\n} else {\n  // Sort to ensure consistent order (EURUSD first, then GBPUSD)\n  sessionRecords.sort((a, b) => a.pair.localeCompare(b.pair));\n  \n  for (const data of sessionRecords) {\n    const pair = data.pair;\n    \n    console.log(`Processing ${pair} for summary`);\n    \n    const pairLevels = allKeyLevels.filter(l => l.pair === pair);\n    const sweptLevels = pairLevels.filter(l => l.status === 'SWEPT' && l.swept_by_session === sessionName);\n    const activeLevels = pairLevels.filter(l => l.status === 'ACTIVE');\n    \n    // Direction\n    const hasOHLC = data.session_open && data.session_close;\n    const isBullish = hasOHLC && Number(data.session_close) > Number(data.session_open);\n    const candleEmoji = !hasOHLC ? '⚪' : (isBullish ? '🟢' : '🔴');\n    const candleDir = !hasOHLC ? 'NO DATA' : (isBullish ? 'BULLISH' : 'BEARISH');\n    \n    const sweepDir = getSweepDirection(data);\n    \n    msg += `**${pair}** ${candleEmoji} ${candleDir}\\n`;\n    msg += `─────────────────────────────\\n`;\n    \n    // OHLC\n    msg += `📊 **Session OHLC:**\\n`;\n    msg += `   O: ${formatPrice(data.session_open, pair)}  |  H: ${formatPrice(data.session_high, pair)}\\n`;\n    msg += `   L: ${formatPrice(data.session_low, pair)}  |  C: ${formatPrice(data.session_close, pair)}\\n`;\n    msg += `   Range: ${data.session_range_pips || 'N/A'} pips\\n\\n`;\n    \n    // Sweep Analysis\n    msg += `🎯 **Sweep Analysis:** ${sweepDir.emoji} ${sweepDir.text}\\n`;\n    msg += `   Levels Swept: ${sweptLevels.length}\\n\\n`;\n    \n    // Swept Details\n    if (sweptLevels.length > 0) {\n      msg += `📍 **Swept Levels:**\\n`;\n      for (const level of sweptLevels) {\n        const emoji = getLevelEmoji(level.level_type);\n        const depthPips = (level.price && level.swept_price) \n          ? (Math.abs(Number(level.swept_price) - Number(level.price)) * 10000).toFixed(1)\n          : 'N/A';\n        msg += `   ${emoji} **${level.level_type}**: ${formatPrice(level.price, pair)} → ${formatPrice(level.swept_price, pair)} (${depthPips} pips)\\n`;\n      }\n      msg += '\\n';\n    }\n    \n    // Active Levels\n    if (activeLevels.length > 0) {\n      msg += `✅ **Active Levels:**\\n`;\n      for (const level of activeLevels.slice(0, 6)) {\n        const emoji = getLevelEmoji(level.level_type);\n        msg += `   ${emoji} ${level.level_type}: ${formatPrice(level.price, pair)}\\n`;\n      }\n      if (activeLevels.length > 6) msg += `   ... +${activeLevels.length - 6} more\\n`;\n      msg += '\\n';\n    }\n    \n    // Profile indicator\n    let sweepSummary = data.sweep_summary || {};\n    if (typeof sweepSummary === 'string') {\n      try { sweepSummary = JSON.parse(sweepSummary); } catch(e) {}\n    }\n    \n    if (sweepSummary.both_asia_sides_swept && sessionName === 'LONDON') {\n      msg += `⚠️ **S&D WARNING:** Both Asia sides swept - avoid directional trades\\n\\n`;\n    } else if ((data.swept_pdh || data.swept_pdl) && sessionName === 'LONDON') {\n      msg += `📊 **London Reversal Setup:** HTF level reached\\n\\n`;\n    } else if (!data.swept_pdh && !data.swept_pdl && sessionName === 'LONDON') {\n      msg += `👀 **NY Reversal Watch:** London missed HTF levels\\n\\n`;\n    } else if ((data.swept_pdh || data.swept_pdl) && sessionName === 'NEW_YORK') {\n      msg += `📊 **NY Reversal Setup:** HTF level reached\\n\\n`;\n    }\n  }\n}\n\nmsg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n`;\nmsg += `🤖 FA1880 Session Tracker  |  ${new Date().toISOString().slice(11, 19)} UTC`;\n\n// Return single item with the complete message\nreturn {\n  json: {\n    content: msg,\n    session: sessionName,\n    date: today,\n    pairs_processed: sessionRecords.length\n  }\n};"
+      },
+      "id": "1b12b671-fd2c-4f9a-aa13-ac27f9a8b0d2",
+      "name": "📊 Final Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1168
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "d9b23189-bcd5-4aac-9c79-307e34bcbd5c",
+      "name": "✅ Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        864,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.content }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        672,
+        1168
+      ],
+      "id": "277c4f6f-9e81-4c9c-bf79-b9f7f97d9211",
+      "name": "Discord",
+      "webhookId": "bf3ced32-d192-4a18-af84-406083e269d9",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "fMlma8A9SiteuZyr",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/session_data",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "date",
+              "value": "=eq.{{ $('1️⃣ Determine Session').first().json.date }}"
+            },
+            {
+              "name": "session",
+              "value": "=eq.{{ $('1️⃣ Determine Session').first().json.session }}"
+            },
+            {
+              "name": "order",
+              "value": "pair.desc"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f28bf679-c7b6-4a6c-990f-a8996cff9927",
+      "name": "4️⃣ Get Session Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        1168
+      ],
+      "alwaysOutputData": false,
+      "executeOnce": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Session Summary\nSend session summary data to discord",
+        "height": 336,
+        "width": 1136
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -80,
+        1024
+      ],
+      "typeVersion": 1,
+      "id": "52ac66f4-b57b-42d0-8b4d-ffa9134b71c9",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2a4e8515-f725-4508-bf5e-6f63b958641d",
+              "leftValue": "={{ $json.has_levels_to_update }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -928,
+        960
+      ],
+      "id": "c60077fd-4c94-42a6-b2ab-300ccd4a290d",
+      "name": "Has Sweeps?",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/key_levels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pair",
+              "value": "=eq.{{ $json.pair }}"
+            },
+            {
+              "name": "level_type",
+              "value": "in.(PDH,PDL,ASIA_LOW,ASIA_HIGH,LONDON_LOW,LONDON_HIGH,NEW_YORK_LOW,NEW_YORK_HIGH)"
+            },
+            {
+              "name": "status",
+              "value": "eq.ACTIVE"
+            },
+            {
+              "name": "order",
+              "value": "date.desc"
+            },
+            {
+              "name": "date",
+              "value": "=eq.{{ $json.date }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d75bf798-889c-4fb4-a604-d2fdc597dc2c",
+      "name": "Get Key Levels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1376,
+        960
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/key_levels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"{{ $json.status }}\",\n  \"swept_time\": \"{{ $json.swept_time }}\",\n  \"swept_price\": {{ $json.swept_price }},\n  \"swept_by_session\": \"{{ $json.swept_by_session }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -448,
+        944
+      ],
+      "id": "dde263f1-cfaf-44ac-affb-e73b1bd2d915",
+      "name": "Update Key Levels",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE LEVEL UPDATE - Include pair for matching\n// ============================================\n\nconst allItems = $input.all();\nconst allLevelUpdates = [];\n\nfor (const item of allItems) {\n  const sweepData = item.json;\n  const levelsToUpdate = sweepData.levels_to_update || [];\n  \n  console.log(`${sweepData.pair}: ${levelsToUpdate.length} levels to update`);\n  \n  for (const level of levelsToUpdate) {\n    allLevelUpdates.push({\n      json: {\n        id: level.id,\n        status: 'SWEPT',\n        swept_time: level.swept_time,\n        swept_price: level.swept_price,\n        swept_by_session: level.swept_by_session,\n        pair: sweepData.pair\n      },\n      pairedItem: { item: allItems.indexOf(item) }\n    });\n  }\n}\n\nif (allLevelUpdates.length === 0) {\n  console.log('No levels to update');\n  return [{ json: { skip: true, pair: null }, pairedItem: { item: 0 } }];\n}\n\nconsole.log(`Total level updates: ${allLevelUpdates.length}`);\nreturn allLevelUpdates;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        944
+      ],
+      "id": "342d51e2-bf51-4f2b-a1eb-af66768d7261",
+      "name": "Prepare Level Update"
+    },
+    {
+      "parameters": {
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/key_levels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pair",
+              "value": "=eq.{{ $json.pair }}"
+            },
+            {
+              "name": "order",
+              "value": "pair.asc,level_type.asc"
+            },
+            {
+              "name": "date",
+              "value": "=eq.{{ $('1️⃣ Determine Session').first().json.date }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5e8d8fbf-2b01-43b1-9e4f-22ae9cd85c13",
+      "name": "Get All Key Levels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        288,
+        1168
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE UPSERT - Only process pairs from current input\n// ============================================\n\nconst inputItems = $input.all();\nconst allSweepData = $('5️⃣ Check Sweeps').all();\n\n// Get unique pairs from CURRENT INPUT only\nconst pairsInInput = [...new Set(\n  inputItems\n    .map(i => i.json.pair)\n    .filter(Boolean)\n)];\n\nconsole.log('Pairs in this input batch:', pairsInInput);\n\nconst results = [];\n\nfor (const pair of pairsInInput) {\n  // Find matching session data from Check Sweeps\n  const matchingData = allSweepData.find(item => item.json.pair === pair);\n  \n  if (matchingData) {\n    console.log(`✓ Adding ${pair} to upsert`);\n    results.push({ json: { ...matchingData.json } });\n  } else {\n    console.log(`✗ No data found for ${pair}`);\n  }\n}\n\nif (results.length === 0) {\n  console.log('WARNING: No matching pairs found!');\n  console.log('Input items:', JSON.stringify(inputItems.map(i => i.json), null, 2));\n  // Return empty to avoid errors downstream\n  return [];\n}\n\nreturn results;"
+      },
+      "id": "21bd03a8-aab2-4af1-91d2-382e7e3ac486",
+      "name": "Prepare Upsert Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1168,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE TWELVEDATA API RESPONSE (WF3 Backfill)\n// ============================================\n\nconst items = $input.all();\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Check for API error responses\n  if (data.code || data.status === 'error') {\n    return [{\n      json: {\n        hasErrors: true,\n        errorType: 'API_ERROR',\n        message: data.message || 'Unknown API error',\n        timestamp: new Date().toISOString()\n      }\n    }];\n  }\n  \n  // Check for rate limit errors\n  if (data.message && data.message.includes('API credits')) {\n    return [{\n      json: {\n        hasErrors: true,\n        errorType: 'RATE_LIMIT',\n        message: data.message,\n        timestamp: new Date().toISOString()\n      }\n    }];\n  }\n}\n\n// No API errors - pass through to existing flow\n// (existing flow will handle empty data case)\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        16
+      ],
+      "id": "66708bb8-4a11-45a9-898d-bf2e1eed98e3",
+      "name": "✅ Validate API Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6249bde9-5196-4659-ab93-db52da6f7dd8",
+              "leftValue": "={{ $json.hasErrors }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -256,
+        16
+      ],
+      "id": "bf7e6582-79b4-4120-9600-dc23d6567137",
+      "name": "Has API Errors?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255314492653588/M0iMq2_4AbtnxSEaBS9DJe92VFRINjEDWtMDNSKw0-m5D2cKAxV_IwpEdtU9yGAQIZRY  ",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"🔴 WF1 TwelveData API Error\",\n    \"color\": 15548997,\n    \"fields\": [\n      {\n        \"name\": \"Error Type\",\n        \"value\": \"{{ $json.errors[0].type }}\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Message\", \n        \"value\": \"{{ $json.errors[0].message }}\",\n        \"inline\": false\n      },\n      {\n        \"name\": \"Error Count\",\n        \"value\": \"{{ $json.errorCount }}\",\n        \"inline\": true\n      }\n    ],\n    \"timestamp\": \"{{ $json.timestamp }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "d6dfe46a-663e-4455-a074-9406fe97d64e",
+      "name": "🚨 Discord API Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "notes": "Only triggered on error path"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE SUPABASE FETCH RESPONSE\n// ============================================\n\nconst items = $input.all();\nconst sessionInfo = $('2️⃣ Fetch Session 5M Candles').first().json;\n\n// Check if we got an error response from Supabase\nconst firstItem = items[0]?.json;\n\nif (firstItem?.code || firstItem?.message?.includes('error')) {\n  console.log('❌ Supabase error:', firstItem.message);\n  return [{\n    json: {\n      hasErrors: true,\n      errorType: 'SUPABASE_ERROR',\n      message: firstItem.message || 'Database fetch failed',\n      pair: sessionInfo?.pair || 'unknown',\n      session: sessionInfo?.session || 'unknown',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// Count valid candles\nconst candleCount = items.filter(i => i.json.open_time).length;\n\nconsole.log(`✅ Fetched ${candleCount} candles from Supabase for ${sessionInfo?.pair} ${sessionInfo?.session}`);\n\n// Pass through - downstream will handle empty data via backfill\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1376,
+        592
+      ],
+      "id": "8262627f-3343-47d3-be22-82337e2e91fb",
+      "name": "✅ Validate Supabase Response"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "⏰ Asia Close (08:05 UTC)": {
+      "main": [
+        [
+          {
+            "node": "1️⃣ Determine Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ London Close (13:05 UTC)": {
+      "main": [
+        [
+          {
+            "node": "1️⃣ Determine Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ NY Close (22:05 UTC)": {
+      "main": [
+        [
+          {
+            "node": "1️⃣ Determine Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "▶️ Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "1️⃣ Determine Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1️⃣ Determine Session": {
+      "main": [
+        [
+          {
+            "node": "2️⃣ Fetch Session 5M Candles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2️⃣ Fetch Session 5M Candles": {
+      "main": [
+        [
+          {
+            "node": "✅ Validate Supabase Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3️⃣ Check Completeness & Calculate OHLC": {
+      "main": [
+        [
+          {
+            "node": "Needs Backfill?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Backfill?": {
+      "main": [
+        [
+          {
+            "node": "⚠️ Prepare Backfill",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔀 Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Prepare Backfill": {
+      "main": [
+        [
+          {
+            "node": "📡 Fetch from TwelveData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📡 Fetch from TwelveData": {
+      "main": [
+        [
+          {
+            "node": "✅ Validate API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Transform Backfill": {
+      "main": [
+        [
+          {
+            "node": "Has Backfill Candles?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Backfill Candles?": {
+      "main": [
+        [
+          {
+            "node": "💾 Store Backfill Candles",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Log Backfill Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Store Backfill Candles": {
+      "main": [
+        [
+          {
+            "node": "📊 Recalculate OHLC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Recalculate OHLC": {
+      "main": [
+        [
+          {
+            "node": "🔀 Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "❌ Log Backfill Failure": {
+      "main": [
+        [
+          {
+            "node": "🔀 Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "🔀 Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Get Key Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5️⃣ Check Sweeps": {
+      "main": [
+        [
+          {
+            "node": "Has Sweeps?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6️⃣ Upsert Session Data": {
+      "main": [
+        [
+          {
+            "node": "7️⃣ Prepare Key Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7️⃣ Prepare Key Levels": {
+      "main": [
+        [
+          {
+            "node": "💾 Create Key Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Create Key Levels": {
+      "main": [
+        [
+          {
+            "node": "4️⃣ Get Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Final Summary": {
+      "main": [
+        [
+          {
+            "node": "Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord": {
+      "main": [
+        [
+          {
+            "node": "✅ Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4️⃣ Get Session Data": {
+      "main": [
+        [
+          {
+            "node": "Get All Key Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Sweeps?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Level Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Upsert Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Key Levels": {
+      "main": [
+        [
+          {
+            "node": "5️⃣ Check Sweeps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Key Levels": {
+      "main": [
+        [
+          {
+            "node": "Prepare Upsert Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Level Update": {
+      "main": [
+        [
+          {
+            "node": "Update Key Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Key Levels": {
+      "main": [
+        [
+          {
+            "node": "📊 Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Upsert Data": {
+      "main": [
+        [
+          {
+            "node": "6️⃣ Upsert Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Validate API Response": {
+      "main": [
+        [
+          {
+            "node": "Has API Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has API Errors?": {
+      "main": [
+        [
+          {
+            "node": "🚨 Discord API Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔄 Transform Backfill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Validate Supabase Response": {
+      "main": [
+        [
+          {
+            "node": "3️⃣ Check Completeness & Calculate OHLC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "ZXiIfbwA3d00Lai2XTM8G",
+    "timezone": "Etc/UTC"
+  },
+  "versionId": "6d4a53de-5153-4753-9724-d8a830b6bf27",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "loCGDSqvNo9QErJumqKAY",
+  "tags": [
+    {
+      "updatedAt": "2026-01-28T07:18:41.307Z",
+      "createdAt": "2026-01-28T07:18:41.307Z",
+      "id": "EdBl1FH018hG0qXg",
+      "name": "Data Collection"
+    },
+    {
+      "updatedAt": "2026-02-03T18:39:07.615Z",
+      "createdAt": "2026-02-03T18:39:07.615Z",
+      "id": "NPca9X0xxnFoCffS",
+      "name": "v2"
+    },
+    {
+      "updatedAt": "2026-02-03T18:39:07.639Z",
+      "createdAt": "2026-02-03T18:39:07.639Z",
+      "id": "nJIM3FTCrSieHpq7",
+      "name": "Session Tracking"
+    },
+    {
+      "updatedAt": "2026-02-03T18:39:07.644Z",
+      "createdAt": "2026-02-03T18:39:07.644Z",
+      "id": "y3zrQZ1xx255c4eV",
+      "name": "FractalEdge"
+    }
+  ]
+}

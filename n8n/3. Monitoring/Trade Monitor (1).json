@@ -1,0 +1,389 @@
+{
+  "name": "Trade Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "f8de06b0-e0d2-4ec4-bf1f-04b70ca1a30c",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        112
+      ],
+      "notes": "Runs every 5 minutes to check open trades"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/trade_monitor_check_v2",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "id": "87a3c42d-8f8a-4bc9-aa20-793fb6149d92",
+      "name": "Check Open Trades",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -448,
+        112
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "notes": "Calls trade_monitor_check() - returns closed trades"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has-results",
+              "leftValue": "={{ $json.closed_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3c17d87a-c707-4a0d-95e5-5f9455bd5092",
+      "name": "Any Trades Closed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        112
+      ],
+      "notes": "Check if any trades hit TP or SL"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Format Discord message for closed trade\nconst trade = $input.item.json;\n\nconst isWin = trade.action && trade.action.startsWith('WIN');\nconst isLoss = trade.action && trade.action.startsWith('LOSS');\nconst emoji = isWin ? '🟢' : (isLoss ? '🔴' : '⚪');\nconst color = isWin ? 3066993 : (isLoss ? 15158332 : 9807270);\n\nconst resultSign = trade.result_pips >= 0 ? '+' : '';\nconst amountSign = trade.result_amount >= 0 ? '+' : '';\n\nreturn {\n  content: '<@891045460922466354>',\n  embeds: [{\n    title: `${emoji} TRADE CLOSED: ${trade.action || 'UNKNOWN'}`,\n    description: `${trade.trade_direction} ${trade.trade_pair}`,\n    color: color,\n    fields: [\n      {\n        name: 'Exit Price',\n        value: String(trade.exit_price || 'N/A'),\n        inline: true\n      },\n      {\n        name: 'Result',\n        value: `${resultSign}${trade.result_pips || 0} pips`,\n        inline: true\n      },\n      {\n        name: 'R-Multiple',\n        value: `${resultSign}${trade.result_r || 0}R`,\n        inline: true\n      },\n      {\n        name: 'P/L',\n        value: `$${amountSign}${trade.result_amount || 0}`,\n        inline: true\n      },\n      {\n        name: 'Strategy',\n        value: trade.trade_strategy || 'N/A',\n        inline: true\n      }\n    ],\n    footer: {\n      text: `Trade ID: ${trade.trade_id}`\n    },\n    timestamp: new Date().toISOString()\n  }]\n};"
+      },
+      "id": "f14e1c32-b159-4235-9c3f-30ecb780efc3",
+      "name": "Format Close Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "notes": "Format Discord embed for each closed trade"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1465591958322810982/kvSJhNfyr13L7V1ZYx17RM4kBC6R33yn7LQQEg0M9Fdd-iHyRH4BU6cevvIlMEE1Uedu",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "f7755cd9-a69b-471a-b420-42c97ab60d2a",
+      "name": "Send Discord Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        224,
+        0
+      ],
+      "notes": "Send trade closed alert to Discord"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/trade_get_account_summary",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "id": "a4732bd9-6adf-4b47-b59e-05ad8287cfa8",
+      "name": "Get Account Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        448,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "notes": "Get current account stats after trade close"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format account summary for Discord\nconst items = $input.all();\nconst summary = items[0]?.json?.[0] || items[0]?.json || {};\n\nconst totalPnl = parseFloat(summary.total_pnl) || 0;\nconst pnlEmoji = totalPnl >= 0 ? '📈' : '📉';\nconst pnlColor = totalPnl >= 0 ? 3066993 : 15158332;\nconst pnlSign = totalPnl >= 0 ? '+' : '';\n\nconst currentBalance = parseFloat(summary.current_balance) || 0;\nconst winRate = parseFloat(summary.win_rate) || 0;\nconst avgR = parseFloat(summary.expectancy_r) || 0;\nconst openTrades = parseInt(summary.open_trades) || 0;\nconst totalTrades = parseInt(summary.total_trades) || 0;\nconst wins = parseInt(summary.wins) || 0;\nconst losses = parseInt(summary.losses) || 0;\n\nreturn [{\n  embeds: [{\n    title: `${pnlEmoji} Account Update`,\n    color: pnlColor,\n    fields: [\n      {\n        name: 'Balance',\n        value: `$${currentBalance.toLocaleString()}`,\n        inline: true\n      },\n      {\n        name: 'Total P/L',\n        value: `$${pnlSign}${totalPnl.toLocaleString()}`,\n        inline: true\n      },\n      {\n        name: 'Win Rate',\n        value: `${winRate}%`,\n        inline: true\n      },\n      {\n        name: 'Record',\n        value: `${wins}W - ${losses}L`,\n        inline: true\n      },\n      {\n        name: 'Avg R',\n        value: `${avgR}R`,\n        inline: true\n      },\n      {\n        name: 'Open Trades',\n        value: String(openTrades),\n        inline: true\n      }\n    ],\n    footer: {\n      text: `Total Trades: ${totalTrades}`\n    },\n    timestamp: new Date().toISOString()\n  }]\n}];"
+      },
+      "id": "b66f7fd3-f5c1-4869-9a52-2401cdf637eb",
+      "name": "Format Account Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "notes": "Format account stats for Discord"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1469059305503199337/qetQVSGrrziIVUsPLCDQ2uJianAFU2r7mCAmZ0bo4yU46nJAwlHVmFJl7Y52YaLJIWvU",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "1ab9c634-a839-4cd8-a832-50774c769aea",
+      "name": "Send Account Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        880,
+        0
+      ],
+      "notes": "Send account summary to Discord"
+    },
+    {
+      "parameters": {},
+      "id": "4fe7c569-030b-4c62-86e1-c31bdb9f8a01",
+      "name": "No Trades Closed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        0,
+        208
+      ],
+      "notes": "No trades hit TP/SL this check"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/workflow_logs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"workflow_name\": \"WF4 - Trade Monitor\",\n  \"log_level\": \"INFO\",\n  \"message\": \"Trade closed: {{ $json.closed_trades[0].details }}\",\n  \"context\": {{ JSON.stringify({ \"event_type\": \"TRADE_CLOSED\", \"checked_at\": $json.checked_at, \"closed_count\": $json.closed_count, \"closed_trades\": $json.closed_trades, \"open_trades_remaining\": $json.open_trades_remaining }) }}\n}",
+        "options": {}
+      },
+      "id": "2a8d2c95-e7e3-4c5a-8a81-f0e5da52399f",
+      "name": "Log Trade Closure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1104,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "notes": "Log trade closure to workflow_logs"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Check Open Trades",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Open Trades": {
+      "main": [
+        [
+          {
+            "node": "Any Trades Closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Trades Closed?": {
+      "main": [
+        [
+          {
+            "node": "Format Close Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Trades Closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Close Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Discord Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Discord Alert": {
+      "main": [
+        [
+          {
+            "node": "Get Account Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Account Summary": {
+      "main": [
+        [
+          {
+            "node": "Format Account Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Account Summary": {
+      "main": [
+        [
+          {
+            "node": "Send Account Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Account Summary": {
+      "main": [
+        [
+          {
+            "node": "Log Trade Closure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "ZXiIfbwA3d00Lai2XTM8G"
+  },
+  "versionId": "cf5a529d-7d01-42c2-b7a5-bacbdcd0d78f",
+  "meta": {
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "b5KdsqxN6JGTn1vqwteVT",
+  "tags": []
+}

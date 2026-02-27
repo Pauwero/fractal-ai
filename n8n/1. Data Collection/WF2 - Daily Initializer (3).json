@@ -1,0 +1,1349 @@
+{
+  "name": "WF2 - Daily Initializer",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "check-errors",
+              "leftValue": "={{ $json.hasErrors }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "72683c64-b746-4d7a-bc94-03c798c90977",
+      "name": "Has Errors?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1616,
+        1328
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract results for further processing\nconst data = $input.all();\nreturn data || [];"
+      },
+      "id": "1d7ac5c6-3372-4438-b32f-1ead71954681",
+      "name": "Extract Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        1344
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255314492653588/M0iMq2_4AbtnxSEaBS9DJe92VFRINjEDWtMDNSKw0-m5D2cKAxV_IwpEdtU9yGAQIZRY  ",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "af7f5153-cc5b-46ae-8765-e881f25a9ee6",
+      "name": "Send Error to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        304,
+        96
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if upsert was successful\nconst response = $input.first().json;\n\n// Check for error response\nif (response.code || response.error || response.message?.includes('error')) {\n  return [{\n    json: {\n      success: false,\n      error: response.message || response.error || 'Database upsert failed',\n      node: 'Upsert Key Levels'\n    }\n  }];\n}\n\n// Success\nreturn [{\n  json: {\n    success: true,\n    insertedCount: Array.isArray(response) ? response.length : 1\n  }\n}];"
+      },
+      "id": "62bdbb13-9dc2-45d5-8ecc-cf33e83557b4",
+      "name": "Check Levels Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        1344
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8a662ee1-f866-4412-92c9-73a075d1ca60",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -416,
+        1344
+      ],
+      "id": "32e485a5-aa11-451e-8148-9c77e06d9fb8",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF2 NODE 4: BUILD OUTPUT\n// ============================================\n// VERSION: 4.0.7\n// \n// CHANGES FROM 4.0.6:\n// - Improved Discord message styling\n// - Added visual separators and emojis\n// - Code blocks for key data\n// - Better visual hierarchy\n// - Maintained <2000 char limit\n//\n// RESPONSIBILITIES:\n// - Assemble keyLevels array for upsert (PDH/PDL)\n// - Assemble weeklyLevels array (conditional)\n// - Assemble monthlyLevels array (conditional)\n// - Build dailyContext object matching table schema\n// - Build analysis object for extended data\n// - Build notification object for Discord\n//\n// INPUT: All processed data from Node 3\n// OUTPUT: Structured data ready for DB upsert and notifications\n// ============================================\n\nconst items = $('Calculate DOL').all();\nconst results = [];\n\nconst DISCORD_CHAR_LIMIT = 2000;\nconst DISCORD_SAFE_LIMIT = 1900; // Leave buffer for styling\n\nconsole.log('========================================');\nconsole.log('WF2 v4.0.7 - Node 4: Build Output');\nconsole.log('========================================');\n\n// ============================================\n// HELPER FUNCTIONS\n// ============================================\n\nfunction formatPrice(price, decimals = 5) {\n  return typeof price === 'number' ? price.toFixed(decimals) : 'N/A';\n}\n\nfunction truncateMessage(message, limit) {\n  if (message.length <= limit) return message;\n  const truncateAt = message.lastIndexOf('\\n', limit - 50);\n  const cutPoint = truncateAt > limit * 0.7 ? truncateAt : limit - 50;\n  return message.substring(0, cutPoint) + '\\n\\n... [truncated]\\n━━━━━━━━━━━━━━━━━━━━━━━━━━';\n}\n\n// ============================================\n// PROCESS EACH PAIR\n// ============================================\n\nfor (const item of items) {\n  const data = item.json;\n  const {\n    pair, tradingDate, tradingDayName, storageFlags,\n    candles, levels, sessionLevels, swingData, marketData,\n    bias, candleAnalysis, dol, confluence\n  } = data;\n\n  console.log(`\\n--- Building Output for ${pair} ---`);\n\n  const { pdh, pdl, pwh, pwl, pmh, pml } = levels;\n\n  // ============================================\n  // KEY LEVELS (Always store PDH/PDL)\n  // ============================================\n\n  const keyLevels = [\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PDH',\n      price: pdh.price,\n      status: pdh.status,\n      is_tradeable: true,\n      expected_direction: 'BEARISH'\n    },\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PDL',\n      price: pdl.price,\n      status: pdl.status,\n      is_tradeable: true,\n      expected_direction: 'BULLISH'\n    }\n  ];\n\n  // ============================================\n  // WEEKLY LEVELS (Conditional - Monday only)\n  // ============================================\n\n  const weeklyLevels = (storageFlags.shouldStoreWeeklyLevels && pwh.price && pwl.price) ? [\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PWH',\n      price: pwh.price,\n      status: pwh.status,\n      is_tradeable: true,\n      expected_direction: 'BEARISH'\n    },\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PWL',\n      price: pwl.price,\n      status: pwl.status,\n      is_tradeable: true,\n      expected_direction: 'BULLISH'\n    }\n  ] : [];\n\n  // ============================================\n  // MONTHLY LEVELS (Conditional - 1st trading day)\n  // ============================================\n\n  const monthlyLevels = (storageFlags.shouldStoreMonthlyLevels && pmh.price && pml.price) ? [\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PMH',\n      price: pmh.price,\n      status: pmh.status,\n      is_tradeable: pmh.inProximity,\n      expected_direction: 'BEARISH'\n    },\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PML',\n      price: pml.price,\n      status: pml.status,\n      is_tradeable: pml.inProximity,\n      expected_direction: 'BULLISH'\n    }\n  ] : [];\n\n  console.log(`${pair}: Key levels: ${keyLevels.length}, Weekly: ${weeklyLevels.length}, Monthly: ${monthlyLevels.length}`);\n\n  // ============================================\n  // DAILY CONTEXT (Matches table schema exactly)\n  // ============================================\n\n  const dailyContext = {\n    date: tradingDate,\n    pair: pair,\n    daily_bias: bias.direction,\n    bias_confidence: bias.confidence,\n    bias_reasoning: bias.reasoning,\n    pdh: pdh.price,\n    pdl: pdl.price,\n    prev_close: marketData.prevClose,\n    prev_day_swept_pdh: candleAnalysis.sweptReferenceHigh,\n    prev_day_swept_pdl: candleAnalysis.sweptReferenceLow,\n    prev_day_closed_above_pdh: candleAnalysis.closedAboveReferenceHigh,\n    prev_day_closed_below_pdl: candleAnalysis.closedBelowReferenceLow,\n    pwh: pwh.price,\n    pwl: pwl.price,\n    htf_direction: dol.htfDirection,\n    last_1h_swing_type: swingData?.['1H']?.type || null,\n    last_1h_swing_price: swingData?.['1H']?.price || null,\n    last_4h_swing_type: swingData?.['4H']?.type || null,\n    last_4h_swing_price: swingData?.['4H']?.price || null,\n    primary_dol: dol.primary,\n    primary_dol_price: dol.primaryPrice,\n    primary_dol_reasoning: dol.reasoning,\n    secondary_dol: dol.secondary,\n    secondary_dol_price: dol.secondaryPrice\n  };\n\n  // ============================================\n  // ANALYSIS (Extended data - not for DB)\n  // ============================================\n\n  const analysis = {\n    dailyATR: marketData.dailyATR,\n    dailyATRPips: marketData.dailyATRPips,\n    currentPhase: bias.phase,\n    candleType: bias.candleType,\n    oscillationContext: dol.oscillationContext,\n    dolConfidence: dol.confidence,\n    equilibrium: marketData.equilibrium,\n    currentPrice: marketData.currentPrice,\n    dolConfluence: {\n      hasConfluence: confluence.hasConfluence,\n      confluenceCount: confluence.count,\n      confluenceScore: confluence.score,\n      confluentLevels: confluence.levels,\n      thresholdPips: confluence.thresholdPips\n    },\n    sessionLevelsActive: sessionLevels.length,\n    levelStatuses: {\n      pdh: { price: pdh.price, status: pdh.status, distance: pdh.distancePips },\n      pdl: { price: pdl.price, status: pdl.status, distance: pdl.distancePips },\n      pwh: { price: pwh.price, status: pwh.status, distance: pwh.distancePips },\n      pwl: { price: pwl.price, status: pwl.status, distance: pwl.distancePips },\n      pmh: { price: pmh.price, status: pmh.status, distance: pmh.distancePips, inProximity: pmh.inProximity },\n      pml: { price: pml.price, status: pml.status, distance: pml.distancePips, inProximity: pml.inProximity }\n    },\n    sessionLevels: sessionLevels.slice(0, 10).map(sl => ({\n      type: sl.levelType,\n      price: sl.price,\n      daysAgo: sl.daysAgo,\n      distancePips: sl.distancePips.toFixed(1)\n    }))\n  };\n\n  // ============================================\n  // NOTIFICATION STYLING\n  // ============================================\n\n  // Emojis for visual indicators\n  const biasEmoji = bias.direction === 'BULLISH' ? '🟢' : bias.direction === 'BEARISH' ? '🔴' : '⚪';\n  const dirArrow = bias.direction === 'BULLISH' ? '📈' : bias.direction === 'BEARISH' ? '📉' : '📊';\n  const phaseEmoji = bias.phase === 'EXPANSION' ? '🚀' : bias.phase === 'REVERSAL' ? '🔄' : '⏸️';\n  const dolConfidenceEmoji = dol.confidence === 'VERY_HIGH' ? '🎯' : dol.confidence === 'HIGH' ? '✅' : dol.confidence === 'MEDIUM' ? '⚠️' : '❓';\n  const htfEmoji = dol.htfDirection === 'BULLISH' ? '⬆️' : dol.htfDirection === 'BEARISH' ? '⬇️' : '↔️';\n  \n  // Pair emoji\n  const pairEmoji = pair === 'EURUSD' ? '🇪🇺' : pair === 'GBPUSD' ? '🇬🇧' : '💱';\n  \n  // Format swing info\n  const swing1H = swingData?.['1H'];\n  const swing4H = swingData?.['4H'];\n\n  // Build reasoning section\n  const analysisDay = candles.analysisDay;\n  const referenceDay = candles.referenceDay;\n  \n  // What happened (condensed)\n  let candleActionText = '';\n  if (data.candleAnalysis.closedAboveReferenceHigh) {\n    candleActionText = 'Closed ABOVE ' + referenceDay.dayName + ' high';\n  } else if (data.candleAnalysis.closedBelowReferenceLow) {\n    candleActionText = 'Closed BELOW ' + referenceDay.dayName + ' low';\n  } else if (data.candleAnalysis.sweptReferenceHigh) {\n    candleActionText = 'Swept ' + referenceDay.dayName + ' high (failed breakout)';\n  } else if (data.candleAnalysis.sweptReferenceLow) {\n    candleActionText = 'Swept ' + referenceDay.dayName + ' low (failed breakdown)';\n  } else {\n    candleActionText = 'Inside day';\n  }\n\n  // Candle type\n  const candleRange = analysisDay.high - analysisDay.low;\n  const candleBody = Math.abs(analysisDay.close - analysisDay.open);\n  const bodyPercent = candleRange > 0 ? Math.round((candleBody / candleRange) * 100) : 0;\n\n  // Weekly context (condensed)\n  let weeklyContextText = '';\n  if (pwh.status === 'SWEPT') {\n    weeklyContextText = '🧹 PWH SWEPT → Reversal to PWL';\n  } else if (pwl.status === 'SWEPT') {\n    weeklyContextText = '🧹 PWL SWEPT → Reversal to PWH';\n  } else if (pwh.status === 'CLOSED_THROUGH') {\n    weeklyContextText = '💥 PWH TAKEN → Bullish continuation';\n  } else if (pwl.status === 'CLOSED_THROUGH') {\n    weeklyContextText = '💥 PWL TAKEN → Bearish continuation';\n  } else {\n    weeklyContextText = '📍 Weekly levels intact';\n  }\n\n  // Confluence (LIMITED TO TOP 4)\n  let confluenceText = '';\n  if (confluence.hasConfluence && confluence.levels.length > 0) {\n    const topLevels = confluence.levels.slice(0, 4);\n    confluenceText = topLevels.map(l => l.name + ' (+' + l.points + ')').join(', ');\n    if (confluence.levels.length > 4) {\n      confluenceText += ' +' + (confluence.levels.length - 4) + ' more';\n    }\n  }\n\n  // Session levels (LIMITED TO TOP 2 PER SIDE - condensed)\n  let sessionHighsText = '';\n  let sessionLowsText = '';\n  if (sessionLevels.length > 0) {\n    const sessionHighs = sessionLevels.filter(sl => sl.levelType.includes('HIGH')).slice(0, 2);\n    const sessionLows = sessionLevels.filter(sl => sl.levelType.includes('LOW')).slice(0, 2);\n    \n    if (sessionHighs.length > 0) {\n      sessionHighsText = sessionHighs.map(h => h.levelType.replace('_HIGH', '') + ' ' + formatPrice(h.price)).join(' | ');\n    }\n    if (sessionLows.length > 0) {\n      sessionLowsText = sessionLows.map(l => l.levelType.replace('_LOW', '') + ' ' + formatPrice(l.price)).join(' | ');\n    }\n  }\n\n  // ============================================\n  // BUILD STYLED DISCORD MESSAGE\n  // ============================================\n\n  let discordText = '';\n  \n  // Header\n  discordText += pairEmoji + ' **' + pair + ' DAILY BIAS** | ' + tradingDayName + '\\n';\n  discordText += '📅 ' + tradingDate + '\\n';\n  discordText += '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n\\n';\n  \n  // Bias section with code block\n  discordText += dirArrow + ' **BIAS: ' + bias.direction + '** ' + biasEmoji + '\\n';\n  discordText += '```\\n';\n  discordText += 'Confidence: ' + bias.confidence + '%\\n';\n  discordText += 'Phase:      ' + bias.phase + ' ' + phaseEmoji + '\\n';\n  discordText += 'Candle:     ' + bias.candleType + ' (' + bodyPercent + '% body)\\n';\n  discordText += 'Action:     ' + candleActionText + '\\n';\n  discordText += '```\\n\\n';\n  \n  // DOL section\n  discordText += '🎯 **DRAW ON LIQUIDITY**\\n';\n  discordText += '```\\n';\n  discordText += 'Primary:   ' + dol.primary + ' @ ' + formatPrice(dol.primaryPrice) + '\\n';\n  if (dol.secondary && dol.secondary !== 'INTERNAL_RETRACEMENT') {\n    discordText += 'Secondary: ' + dol.secondary + ' @ ' + formatPrice(dol.secondaryPrice) + '\\n';\n  }\n  discordText += 'HTF:       ' + dol.htfDirection + ' ' + htfEmoji + '\\n';\n  discordText += '```\\n';\n  discordText += weeklyContextText + '\\n\\n';\n  \n  // Confluence (if exists)\n  if (confluenceText) {\n    discordText += '🔗 **CONFLUENCE** (Score: ' + confluence.score + ')\\n';\n    discordText += confluenceText + '\\n\\n';\n  }\n  \n  // Swings (if exist)\n  if (swing4H || swing1H) {\n    discordText += '🔄 **ACTIVE SWINGS**\\n';\n    if (swing4H) {\n      discordText += '• 4H ' + swing4H.type + ' @ ' + formatPrice(swing4H.price) + '\\n';\n    }\n    if (swing1H) {\n      discordText += '• 1H ' + swing1H.type + ' @ ' + formatPrice(swing1H.price) + '\\n';\n    }\n    discordText += '\\n';\n  }\n  \n  // Key Levels\n  discordText += '📍 **KEY LEVELS**\\n';\n  discordText += '```\\n';\n  discordText += 'PDH: ' + formatPrice(pdh.price) + ' (' + pdh.distancePips.toFixed(1) + 'p)' + (pdh.status !== 'ACTIVE' ? ' [' + pdh.status + ']' : '') + '\\n';\n  discordText += 'PDL: ' + formatPrice(pdl.price) + ' (' + pdl.distancePips.toFixed(1) + 'p)' + (pdl.status !== 'ACTIVE' ? ' [' + pdl.status + ']' : '') + '\\n';\n  discordText += 'PWH: ' + formatPrice(pwh.price) + (pwh.status !== 'ACTIVE' ? ' [' + pwh.status + ']' : '') + '\\n';\n  discordText += 'PWL: ' + formatPrice(pwl.price) + (pwl.status !== 'ACTIVE' ? ' [' + pwl.status + ']' : '') + '\\n';\n  discordText += '```\\n';\n  \n  // Session levels (condensed)\n  if (sessionHighsText || sessionLowsText) {\n    discordText += '📊 **SESSION LEVELS**\\n';\n    if (sessionHighsText) discordText += '↑ ' + sessionHighsText + '\\n';\n    if (sessionLowsText) discordText += '↓ ' + sessionLowsText + '\\n';\n    discordText += '\\n';\n  }\n  \n  // Stats footer\n  discordText += '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n';\n  discordText += '📏 ATR: ' + marketData.dailyATRPips.toFixed(1) + 'p | ⚖️ EQ: ' + formatPrice(marketData.equilibrium) + '\\n';\n  discordText += '🕐 ' + new Date().toISOString().replace('T', ' ').split('.')[0] + ' UTC';\n\n  // Check length and truncate if needed\n  let finalDiscordText = discordText;\n  if (discordText.length > DISCORD_SAFE_LIMIT) {\n    console.log(`WARNING: Discord message ${discordText.length} chars, truncating...`);\n    finalDiscordText = truncateMessage(discordText, DISCORD_SAFE_LIMIT);\n  }\n  \n  console.log(`${pair}: Discord message: ${finalDiscordText.length} chars`);\n\n  // ============================================\n  // EMBED AND SIMPLE MESSAGE FORMATS\n  // ============================================\n\n  const embedColor = bias.direction === 'BULLISH' ? 0x00FF00 : bias.direction === 'BEARISH' ? 0xFF0000 : 0x808080;\n\n  const biasTextEmbed = '**Direction:** ' + bias.direction + ' (' + bias.confidence + '%)\\n**Phase:** ' + bias.phase + '\\n**Candle:** ' + bias.candleType;\n  \n  let dolTextEmbed = '**Primary:** ' + dol.primary + ' @ ' + formatPrice(dol.primaryPrice) + ' ' + dolConfidenceEmoji + '\\n';\n  if (dol.secondary && dol.secondary !== 'INTERNAL_RETRACEMENT') {\n    dolTextEmbed += '**Secondary:** ' + dol.secondary + ' @ ' + formatPrice(dol.secondaryPrice) + '\\n';\n  }\n  dolTextEmbed += '**HTF:** ' + htfEmoji + ' ' + dol.htfDirection;\n  \n  let confluenceTextEmbed = '';\n  if (confluence.hasConfluence && confluence.levels.length > 0) {\n    const levelNames = confluence.levels.slice(0, 5).map(l => l.name).join(', ');\n    confluenceTextEmbed = '**Levels:** ' + levelNames + '\\n**Score:** ' + confluence.score + ' points';\n  }\n  \n  let swingTextEmbed = '';\n  if (swing4H) swingTextEmbed += '**4H:** ' + swing4H.type + ' @ ' + formatPrice(swing4H.price) + '\\n';\n  if (swing1H) swingTextEmbed += '**1H:** ' + swing1H.type + ' @ ' + formatPrice(swing1H.price);\n  \n  const levelsTextEmbed = '**PDH:** ' + formatPrice(pdh.price) + ' (' + pdh.distancePips.toFixed(1) + 'p)\\n' +\n    '**PDL:** ' + formatPrice(pdl.price) + ' (' + pdl.distancePips.toFixed(1) + 'p)\\n' +\n    '**PWH:** ' + formatPrice(pwh.price) + '\\n' +\n    '**PWL:** ' + formatPrice(pwl.price);\n  \n  const statsTextEmbed = '**ATR:** ' + marketData.dailyATRPips.toFixed(1) + ' pips | **EQ:** ' + formatPrice(marketData.equilibrium);\n\n  const embedFields = [\n    { name: '📊 Daily Bias', value: biasTextEmbed, inline: false },\n    { name: '🎯 Draw On Liquidity', value: dolTextEmbed, inline: false }\n  ];\n  \n  if (confluenceTextEmbed) {\n    embedFields.push({ name: '🔗 Confluence', value: confluenceTextEmbed, inline: true });\n  }\n  if (swingTextEmbed) {\n    embedFields.push({ name: '🔄 Active Swings', value: swingTextEmbed, inline: true });\n  }\n  embedFields.push({ name: '📍 Key Levels', value: levelsTextEmbed, inline: false });\n  embedFields.push({ name: '📏 Stats', value: statsTextEmbed, inline: false });\n\n  const discordEmbed = {\n    title: pairEmoji + ' ' + pair + ' Daily Bias - ' + tradingDayName,\n    description: '📅 ' + tradingDate,\n    color: embedColor,\n    fields: embedFields,\n    footer: { text: 'WF2 Daily Initializer v4.0.7' },\n    timestamp: new Date().toISOString()\n  };\n\n  // Short one-liner\n  const shortSummary = biasEmoji + ' **' + pair + '**: ' + bias.direction + ' (' + bias.confidence + '%) | DOL: ' + dol.primary + ' @ ' + formatPrice(dol.primaryPrice) +\n    (confluence.hasConfluence ? ' | Conf: ' + confluence.score + 'pts' : '');\n\n  // Simple markdown message\n  const simpleMessage = [\n    pairEmoji + ' **' + pair + '** - ' + tradingDayName + ' (' + tradingDate + ')',\n    '',\n    biasEmoji + ' **BIAS:** ' + bias.direction + ' (' + bias.confidence + '%) - ' + bias.phase,\n    '🎯 **DOL:** ' + dol.primary + ' @ ' + formatPrice(dol.primaryPrice),\n    htfEmoji + ' **HTF:** ' + dol.htfDirection,\n    '',\n    '📍 PDH ' + formatPrice(pdh.price) + ' | PDL ' + formatPrice(pdl.price),\n    '📏 ATR: ' + marketData.dailyATRPips.toFixed(1) + 'p'\n  ].join('\\n');\n\n  // ============================================\n  // FULL NOTIFICATION OBJECT\n  // ============================================\n\n  const notification = {\n    pair: pair,\n    tradingDate: tradingDate,\n    tradingDayName: tradingDayName,\n    \n    bias: bias.direction,\n    biasConfidence: bias.confidence,\n    phase: bias.phase,\n    reasoning: bias.reasoning,\n    candleType: bias.candleType,\n    \n    primaryDOL: dol.primary,\n    primaryDOLPrice: dol.primaryPrice,\n    secondaryDOL: dol.secondary,\n    secondaryDOLPrice: dol.secondaryPrice,\n    dolConfidence: dol.confidence,\n    dolReasoning: dol.reasoning,\n    htfDirection: dol.htfDirection,\n    oscillationContext: dol.oscillationContext,\n    \n    hasConfluence: confluence.hasConfluence,\n    confluenceCount: confluence.count,\n    confluenceScore: confluence.score,\n    confluentLevels: confluence.levels.map(l => l.name).join(', '),\n    allConfluentLevels: confluence.levels,\n    \n    swing1H: swing1H ? { type: swing1H.type, price: swing1H.price } : null,\n    swing4H: swing4H ? { type: swing4H.type, price: swing4H.price } : null,\n    \n    pdh: formatPrice(pdh.price),\n    pdhDistance: pdh.distancePips.toFixed(1),\n    pdl: formatPrice(pdl.price),\n    pdlDistance: pdl.distancePips.toFixed(1),\n    pwh: formatPrice(pwh.price),\n    pwhStatus: pwh.status,\n    pwl: formatPrice(pwl.price),\n    pwlStatus: pwl.status,\n    \n    dailyATRPips: marketData.dailyATRPips.toFixed(1),\n    equilibrium: formatPrice(marketData.equilibrium),\n    currentPrice: formatPrice(marketData.currentPrice),\n    \n    allSessionLevels: sessionLevels,\n    \n    discordText: finalDiscordText,\n    embed: discordEmbed,\n    content: simpleMessage,\n    shortSummary: shortSummary,\n    summaryMessage: shortSummary\n  };\n\n  console.log(`${pair}: Output ready for upsert`);\n\n  // ============================================\n  // BUILD FINAL OUTPUT\n  // ============================================\n\n  results.push({\n    json: {\n      pair,\n      date: tradingDate,\n      \n      discordText: finalDiscordText,\n      \n      keyLevels,\n      weeklyLevels,\n      monthlyLevels,\n      dailyContext,\n      \n      analysis,\n      notification,\n      \n      _debug: { \n        version: 'v4.0.7', \n        node: 'Build Output', \n        discordMessageLength: finalDiscordText.length,\n        processedAt: new Date().toISOString() \n      }\n    }\n  });\n}\n\nconsole.log(`\\n✅ Node 4 Complete: ${results.length} pairs ready for upsert`);\nreturn results;"
+      },
+      "id": "d0c731a4-8aaa-4a7b-9809-d7a69edb775f",
+      "name": "Build Discord Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        1552
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF2 - CHECK TRADING DAY & INITIALIZE\n// ============================================\nconst now = new Date();\nconst utcDay = now.getUTCDay();\n\n// TESTING MODE - Set to false for production!\nconst TESTING_MODE = false;\n\n// Skip Saturday and Sunday\nif ((utcDay === 0 || utcDay === 6) && !TESTING_MODE) {\n  return [];\n}\n\n// Today's date (new trading day starting)\nconst today = now.toISOString().split('T')[0];\n\n// Calculate start date for session levels (7 calendar days ≈ 5 trading days)\nconst startDate = new Date(today + 'T12:00:00Z');  // ← FIXED: Use 'today' string, not 'now' Date object\nstartDate.setUTCDate(startDate.getUTCDate() - 7);\n\n// Return config for both pairs\nconst pairs = [\n  { pair: 'EUR/USD', pairClean: 'EURUSD', pipMultiplier: 10000, maxDailyDOLPips: 80, maxSwingDOLPips: 150, typicalDailyATR: 0.0060 },\n  { pair: 'GBP/USD', pairClean: 'GBPUSD', pipMultiplier: 10000, maxDailyDOLPips: 100, maxSwingDOLPips: 180, typicalDailyATR: 0.0080 }\n];\n\nreturn pairs.map(p => ({\n  json: {\n    ...p,\n    date: today,\n    fetchedAt: now.toISOString(),\n    sessionLevelStartDate: startDate.toISOString().split('T')[0]\n  }\n}));"
+      },
+      "id": "6860c74f-3014-4fce-afce-d1975f7b96b0",
+      "name": "Check Trading Day",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3088,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "={{ $json.pair }}"
+            },
+            {
+              "name": "interval",
+              "value": "1day"
+            },
+            {
+              "name": "outputsize",
+              "value": "25"
+            },
+            {
+              "name": "apikey",
+              "value": "d9d8976ee9a54997a9b32b5afffa9be0"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "id": "ea9bce72-69f8-46cf-b066-fd079acd8bb7",
+      "name": "Fetch Daily Candles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2752,
+        592
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "={{ $('Check Trading Day').item.json.pair }}"
+            },
+            {
+              "name": "interval",
+              "value": "1month"
+            },
+            {
+              "name": "outputsize",
+              "value": "3"
+            },
+            {
+              "name": "apikey",
+              "value": "d9d8976ee9a54997a9b32b5afffa9be0"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "id": "d9f4c9ef-71f5-4af6-86da-a572fbecd0bd",
+      "name": "Fetch Monthly Candles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2752,
+        944
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// In \"Prepare Key Levels\" node - Add conditional logic\n\nconst items = $input.all();\nconst allLevels = [];\nconst now = new Date();\nconst dayOfWeek = now.getUTCDay(); // 0=Sunday, 1=Monday, etc.\nconst dayOfMonth = now.getUTCDate();\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // ALWAYS add daily levels (PDH, PDL)\n  if (data.keyLevels) {\n    allLevels.push(...data.keyLevels);\n  }\n  \n  // ONLY add weekly levels on MONDAY (dayOfWeek === 1)\n  // Or if it's the first run of the week\n  if (data.weeklyLevels && dayOfWeek === 1) {\n    console.log(`Adding weekly levels - it's Monday`);\n    allLevels.push(...data.weeklyLevels);\n  } else if (data.weeklyLevels) {\n    console.log(`Skipping weekly levels - not Monday (day=${dayOfWeek})`);\n  }\n  \n  // ONLY add monthly levels on 1st of month\n  if (data.monthlyLevels && dayOfMonth === 1) {\n    console.log(`Adding monthly levels - it's the 1st`);\n    allLevels.push(...data.monthlyLevels);\n  } else if (data.monthlyLevels) {\n    console.log(`Skipping monthly levels - not 1st (day=${dayOfMonth})`);\n  }\n}\n\n// Return prepared levels\nif (allLevels.length === 0) {\n  return [{ json: { levels: [], isEmpty: true } }];\n}\n\nreturn [{ json: { levels: allLevels, isEmpty: false } }];"
+      },
+      "id": "9ad08b16-1ce5-41a3-949c-839733f3f20b",
+      "name": "Prepare Key Levels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1056,
+        1344
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD DATABASE ERROR NOTIFICATION\n// ============================================\n// Handles the actual error structure from N8N/Supabase\n// Input format: [{ success: false, error: { message, description, name, ... }, node }]\n// ============================================\n\nconst items = $input.all();\nconst embeds = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Skip if not an error\n  if (data.success !== false) continue;\n  \n  const error = data.error || {};\n  const nodeName = data.node || 'Unknown Node';\n  \n  // Format timestamp if present\n  let timeStr = 'N/A';\n  if (error.timestamp) {\n    try {\n      timeStr = new Date(error.timestamp).toISOString();\n    } catch (e) {\n      timeStr = String(error.timestamp);\n    }\n  }\n  \n  // Build fields\n  const fields = [\n    {\n      name: '📍 Failed Node',\n      value: nodeName,\n      inline: true\n    },\n    {\n      name: '❌ Error Type',\n      value: error.name || 'Unknown',\n      inline: true\n    },\n    {\n      name: '🕐 Timestamp',\n      value: timeStr,\n      inline: true\n    },\n    {\n      name: '📝 Message',\n      value: (error.message || 'No message provided').substring(0, 256),\n      inline: false\n    }\n  ];\n  \n  // Add description - this often contains the actual SQL/constraint error\n  if (error.description) {\n    fields.push({\n      name: '🔍 Root Cause',\n      value: '```' + error.description.substring(0, 500) + '```',\n      inline: false\n    });\n  }\n  \n  // Add suggested action based on error type\n  let suggestedAction = 'Review the error details and check your workflow configuration.';\n  \n  if (error.description?.includes('violates check constraint')) {\n    const constraintMatch = error.description.match(/\"([^\"]+)\"/g);\n    const constraintName = constraintMatch ? constraintMatch[constraintMatch.length - 1] : 'unknown';\n    suggestedAction = `**Constraint Violation**: ${constraintName}\\n` +\n      `The data being inserted doesn't match allowed values.\\n` +\n      `Check the column value against the database constraint.`;\n  } else if (error.description?.includes('violates unique constraint')) {\n    suggestedAction = '**Duplicate Key**: A record with this key already exists. Check upsert logic.';\n  } else if (error.description?.includes('violates foreign key')) {\n    suggestedAction = '**Foreign Key**: Referenced record does not exist. Ensure parent records exist first.';\n  }\n  \n  fields.push({\n    name: '⚠️ Suggested Action',\n    value: suggestedAction,\n    inline: false\n  });\n  \n  embeds.push({\n    title: '🔴 WF2 Database Error',\n    color: 15548997,\n    fields: fields,\n    footer: { text: 'FractalEdge MVP v2.1 • Check Supabase logs for details' },\n    timestamp: new Date().toISOString()\n  });\n}\n\nif (embeds.length === 0) {\n  return [];\n}\n\nreturn [{ json: { embeds: embeds } }];"
+      },
+      "id": "b5c885ff-50e9-4b4e-92ec-d00a3efa69d9",
+      "name": "⚠️ Build Error Key Level Upsert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/key_levels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "date,pair,level_type"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal,resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.levels) }}",
+        "options": {}
+      },
+      "id": "bccd5026-8270-40ad-9c94-cb04271e73b7",
+      "name": "Upsert Key Levels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -832,
+        1344
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Daily Context for upsert\nconst biasItems = $('Extract Results').all();\nconst contexts = biasItems.map(item => item.json.dailyContext).filter(Boolean);\n\nif (contexts.length === 0) {\n  return [{ json: { contexts: [], isEmpty: true } }];\n}\n\nreturn [{ json: { contexts: contexts, isEmpty: false } }];"
+      },
+      "id": "5074591d-8ae3-4260-8de6-81ff938a9701",
+      "name": "Prepare Daily Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        1568
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/daily_context",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "date,pair"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal,resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.contexts) }}",
+        "options": {}
+      },
+      "id": "da25ce3d-824d-4434-b892-5295f1cf3300",
+      "name": "Upsert Daily Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1056,
+        1568
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255314492653588/M0iMq2_4AbtnxSEaBS9DJe92VFRINjEDWtMDNSKw0-m5D2cKAxV_IwpEdtU9yGAQIZRY  ",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "c2a3decf-b9e5-44c9-9f93-235e1132cbd6",
+      "name": "Send Upsert Error to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        304,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD DATABASE ERROR NOTIFICATION\n// ============================================\n// Handles the actual error structure from N8N/Supabase\n// Input format: [{ success: false, error: { message, description, name, ... }, node }]\n// ============================================\n\nconst items = $input.all();\nconst embeds = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Skip if not an error\n  if (data.success !== false) continue;\n  \n  const error = data.error || {};\n  const nodeName = data.node || 'Unknown Node';\n  \n  // Format timestamp if present\n  let timeStr = 'N/A';\n  if (error.timestamp) {\n    try {\n      timeStr = new Date(error.timestamp).toISOString();\n    } catch (e) {\n      timeStr = String(error.timestamp);\n    }\n  }\n  \n  // Build fields\n  const fields = [\n    {\n      name: '📍 Failed Node',\n      value: nodeName,\n      inline: true\n    },\n    {\n      name: '❌ Error Type',\n      value: error.name || 'Unknown',\n      inline: true\n    },\n    {\n      name: '🕐 Timestamp',\n      value: timeStr,\n      inline: true\n    },\n    {\n      name: '📝 Message',\n      value: (error.message || 'No message provided').substring(0, 256),\n      inline: false\n    }\n  ];\n  \n  // Add description - this often contains the actual SQL/constraint error\n  if (error.description) {\n    fields.push({\n      name: '🔍 Root Cause',\n      value: '```' + error.description.substring(0, 500) + '```',\n      inline: false\n    });\n  }\n  \n  // Add suggested action based on error type\n  let suggestedAction = 'Review the error details and check your workflow configuration.';\n  \n  if (error.description?.includes('violates check constraint')) {\n    const constraintMatch = error.description.match(/\"([^\"]+)\"/g);\n    const constraintName = constraintMatch ? constraintMatch[constraintMatch.length - 1] : 'unknown';\n    suggestedAction = `**Constraint Violation**: ${constraintName}\\n` +\n      `The data being inserted doesn't match allowed values.\\n` +\n      `Check the column value against the database constraint.`;\n  } else if (error.description?.includes('violates unique constraint')) {\n    suggestedAction = '**Duplicate Key**: A record with this key already exists. Check upsert logic.';\n  } else if (error.description?.includes('violates foreign key')) {\n    suggestedAction = '**Foreign Key**: Referenced record does not exist. Ensure parent records exist first.';\n  }\n  \n  fields.push({\n    name: '⚠️ Suggested Action',\n    value: suggestedAction,\n    inline: false\n  });\n  \n  embeds.push({\n    title: '🔴 WF2 Database Error',\n    color: 15548997,\n    fields: fields,\n    footer: { text: 'FractalEdge MVP v2.1 • Check Supabase logs for details' },\n    timestamp: new Date().toISOString()\n  });\n}\n\nif (embeds.length === 0) {\n  return [];\n}\n\nreturn [{ json: { embeds: embeds } }];"
+      },
+      "id": "193412a6-e893-4520-b5bd-1565a488e0f3",
+      "name": "⚠️ Build Calculation Error Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255314492653588/M0iMq2_4AbtnxSEaBS9DJe92VFRINjEDWtMDNSKw0-m5D2cKAxV_IwpEdtU9yGAQIZRY  ",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "f4ca90b8-8062-4d50-abaf-bd87e96aaca6",
+      "name": "Send Context Error to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        304,
+        704
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD DATABASE ERROR NOTIFICATION\n// ============================================\n// Handles the actual error structure from N8N/Supabase\n// Input format: [{ success: false, error: { message, description, name, ... }, node }]\n// ============================================\n\nconst items = $input.all();\nconst embeds = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Skip if not an error\n  if (data.success !== false) continue;\n  \n  const error = data.error || {};\n  const nodeName = data.node || 'Unknown Node';\n  \n  // Format timestamp if present\n  let timeStr = 'N/A';\n  if (error.timestamp) {\n    try {\n      timeStr = new Date(error.timestamp).toISOString();\n    } catch (e) {\n      timeStr = String(error.timestamp);\n    }\n  }\n  \n  // Build fields\n  const fields = [\n    {\n      name: '📍 Failed Node',\n      value: nodeName,\n      inline: true\n    },\n    {\n      name: '❌ Error Type',\n      value: error.name || 'Unknown',\n      inline: true\n    },\n    {\n      name: '🕐 Timestamp',\n      value: timeStr,\n      inline: true\n    },\n    {\n      name: '📝 Message',\n      value: (error.message || 'No message provided').substring(0, 256),\n      inline: false\n    }\n  ];\n  \n  // Add description - this often contains the actual SQL/constraint error\n  if (error.description) {\n    fields.push({\n      name: '🔍 Root Cause',\n      value: '```' + error.description.substring(0, 500) + '```',\n      inline: false\n    });\n  }\n  \n  // Add suggested action based on error type\n  let suggestedAction = 'Review the error details and check your workflow configuration.';\n  \n  if (error.description?.includes('violates check constraint')) {\n    const constraintMatch = error.description.match(/\"([^\"]+)\"/g);\n    const constraintName = constraintMatch ? constraintMatch[constraintMatch.length - 1] : 'unknown';\n    suggestedAction = `**Constraint Violation**: ${constraintName}\\n` +\n      `The data being inserted doesn't match allowed values.\\n` +\n      `Check the column value against the database constraint.`;\n  } else if (error.description?.includes('violates unique constraint')) {\n    suggestedAction = '**Duplicate Key**: A record with this key already exists. Check upsert logic.';\n  } else if (error.description?.includes('violates foreign key')) {\n    suggestedAction = '**Foreign Key**: Referenced record does not exist. Ensure parent records exist first.';\n  }\n  \n  fields.push({\n    name: '⚠️ Suggested Action',\n    value: suggestedAction,\n    inline: false\n  });\n  \n  embeds.push({\n    title: '🔴 WF2 Database Error',\n    color: 15548997,\n    fields: fields,\n    footer: { text: 'FractalEdge MVP v2.1 • Check Supabase logs for details' },\n    timestamp: new Date().toISOString()\n  });\n}\n\nif (embeds.length === 0) {\n  return [];\n}\n\nreturn [{ json: { embeds: embeds } }];"
+      },
+      "id": "fa8a64e7-a2a4-43cb-b93c-f805d1c47a57",
+      "name": "⚠️ Build Context Error Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log Summary\nconst biasItems = $('Extract Results').all();\n\nconst summary = {\n  success: true,\n  date: new Date().toISOString().split('T')[0],\n  pairsProcessed: biasItems.length,\n  biases: biasItems.map(item => ({\n    pair: item.json?.pair,\n    bias: item.json?.dailyContext?.daily_bias,\n    confidence: item.json?.dailyContext?.bias_confidence,\n    phase: item.json?.analysis?.currentPhase,\n    primaryDOL: item.json?.dailyContext?.primary_dol\n  })).filter(b => b.pair),\n  keyLevelsCreated: biasItems.reduce((sum, item) => {\n    return sum + \n      (item.json?.keyLevels?.length || 0) + \n      (item.json?.weeklyLevels?.length || 0) + \n      (item.json?.monthlyLevels?.length || 0);\n  }, 0),\n  timestamp: new Date().toISOString()\n};\n\nconsole.log('WF2 Complete:', JSON.stringify(summary, null, 2));\n\nreturn [{ json: summary }];"
+      },
+      "id": "46028196-69a3-4fda-a4f4-62fb5a6241ec",
+      "name": "Log Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1552
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if upsert was successful\nconst response = $input.first().json;\n\n// Check for error response\nif (response.code || response.error || response.message?.includes('error')) {\n  return [{\n    json: {\n      success: false,\n      error: response.message || response.error || 'Database upsert failed',\n      node: 'Upsert Key Levels'\n    }\n  }];\n}\n\n// Success\nreturn [{\n  json: {\n    success: true,\n    insertedCount: Array.isArray(response) ? response.length : 1\n  }\n}];"
+      },
+      "id": "fd69472f-6136-4d5d-9243-12f312ed92c6",
+      "name": "Check Context Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -832,
+        1568
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 17,
+              "triggerAtMinute": 5
+            }
+          ]
+        }
+      },
+      "id": "2406b933-f308-40a0-9050-e8abc1c9e980",
+      "name": "Daily 17:05 NY Mon-Fri",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3328,
+        784
+      ],
+      "notes": "Cron: 5 17 * * 1-5 (17:05 UTC Mon-Fri, right after NY close)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF2 NODE 2: CALCULATE BIAS\n// ============================================\n// VERSION: 4.0.0\n// \n// RESPONSIBILITIES:\n// - Compare analysis day vs reference day\n// - Detect swept highs/lows\n// - Determine close position\n// - Calculate bias direction and confidence\n// - Determine market phase\n// - Analyze candle type\n// - Generate chart explanation\n//\n// INPUT: Processed candles and levels from Node 1\n// OUTPUT: Bias object with direction, confidence, reasoning\n// ============================================\n\nconst items = $('Process Candles').all();\nconst results = [];\n\nconsole.log('========================================');\nconsole.log('WF2 v4.0.0 - Node 2: Calculate Bias');\nconsole.log('========================================');\n\n// ============================================\n// HELPER FUNCTIONS\n// ============================================\n\nfunction formatPrice(price, decimals = 5) {\n  return typeof price === 'number' ? price.toFixed(decimals) : 'N/A';\n}\n\n// ============================================\n// PROCESS EACH PAIR\n// ============================================\n\nfor (const item of items) {\n  const data = item.json;\n  const { pair, tradingDate, tradingDayName, candles, levels, marketData } = data;\n\n  console.log(`\\n--- Calculating Bias for ${pair} ---`);\n\n  const analysisDay = candles.analysisDay;\n  const referenceDay = candles.referenceDay;\n\n  // ============================================\n  // REFERENCE COMPARISON\n  // ============================================\n\n  const sweptReferenceHigh = analysisDay.high > referenceDay.high;\n  const sweptReferenceLow = analysisDay.low < referenceDay.low;\n  const closedAboveReferenceHigh = analysisDay.close > referenceDay.high;\n  const closedBelowReferenceLow = analysisDay.close < referenceDay.low;\n\n  console.log(`${pair}: Swept High: ${sweptReferenceHigh}, Swept Low: ${sweptReferenceLow}`);\n  console.log(`${pair}: Closed Above: ${closedAboveReferenceHigh}, Closed Below: ${closedBelowReferenceLow}`);\n\n  // ============================================\n  // DETERMINE BIAS\n  // ============================================\n\n  let direction = 'NEUTRAL';\n  let confidence = 50;\n  let phase = 'CONSOLIDATION';\n  let reasoning = '';\n  let chartExplanation = '';\n\n  if (closedAboveReferenceHigh) {\n    // BULLISH EXPANSION\n    direction = 'BULLISH';\n    confidence = 80;\n    phase = 'EXPANSION';\n    reasoning = `${analysisDay.dayName} closed ABOVE ${referenceDay.dayName}'s high. Strong bullish momentum for ${tradingDayName}.`;\n    chartExplanation = `📈 **Bullish Expansion**\\n` +\n      `• ${analysisDay.dayName} (${analysisDay.date}): Closed at ${formatPrice(analysisDay.close)}${analysisDay._corrected ? ' [NY Close]' : ''}\\n` +\n      `• ${referenceDay.dayName} (${referenceDay.date}): High was ${formatPrice(referenceDay.high)}\\n` +\n      `• **Bias for ${tradingDayName}**: Bullish continuation expected.`;\n\n  } else if (closedBelowReferenceLow) {\n    // BEARISH EXPANSION\n    direction = 'BEARISH';\n    confidence = 80;\n    phase = 'EXPANSION';\n    reasoning = `${analysisDay.dayName} closed BELOW ${referenceDay.dayName}'s low. Strong bearish momentum for ${tradingDayName}.`;\n    chartExplanation = `📉 **Bearish Expansion**\\n` +\n      `• ${analysisDay.dayName} (${analysisDay.date}): Closed at ${formatPrice(analysisDay.close)}${analysisDay._corrected ? ' [NY Close]' : ''}\\n` +\n      `• ${referenceDay.dayName} (${referenceDay.date}): Low was ${formatPrice(referenceDay.low)}\\n` +\n      `• **Bias for ${tradingDayName}**: Bearish continuation expected.`;\n\n  } else if (sweptReferenceHigh && !closedAboveReferenceHigh) {\n    // BEARISH REVERSAL (failed breakout)\n    direction = 'BEARISH';\n    confidence = 70;\n    phase = 'REVERSAL';\n    reasoning = `${analysisDay.dayName} swept ${referenceDay.dayName}'s high but closed inside. Failed breakout signals bearish reversal for ${tradingDayName}.`;\n    chartExplanation = `🔄 **Bearish Reversal (Failed Breakout)**\\n` +\n      `• ${analysisDay.dayName} swept high at ${formatPrice(referenceDay.high)} but closed back inside\\n` +\n      `• **Bias for ${tradingDayName}**: Expect bearish move.`;\n\n  } else if (sweptReferenceLow && !closedBelowReferenceLow) {\n    // BULLISH REVERSAL (failed breakdown)\n    direction = 'BULLISH';\n    confidence = 70;\n    phase = 'REVERSAL';\n    reasoning = `${analysisDay.dayName} swept ${referenceDay.dayName}'s low but closed inside. Failed breakdown signals bullish reversal for ${tradingDayName}.`;\n    chartExplanation = `🔄 **Bullish Reversal (Failed Breakdown)**\\n` +\n      `• ${analysisDay.dayName} swept low at ${formatPrice(referenceDay.low)} but closed back inside\\n` +\n      `• **Bias for ${tradingDayName}**: Expect bullish move.`;\n\n  } else {\n    // NEUTRAL / CONSOLIDATION (inside day)\n    direction = 'NEUTRAL';\n    confidence = 45;\n    phase = 'CONSOLIDATION';\n    reasoning = `${analysisDay.dayName} was an inside day relative to ${referenceDay.dayName}. No clear directional bias for ${tradingDayName}.`;\n    chartExplanation = `📊 **Consolidation (Inside Day)**\\n` +\n      `• ${analysisDay.dayName} stayed within ${referenceDay.dayName}'s range\\n` +\n      `• **Bias for ${tradingDayName}**: Wait for breakout.`;\n  }\n\n  // ============================================\n  // CANDLE TYPE ANALYSIS\n  // ============================================\n\n  const range = analysisDay.high - analysisDay.low;\n  const body = Math.abs(analysisDay.close - analysisDay.open);\n  const bodyPercent = range > 0 ? (body / range) * 100 : 0;\n\n  let candleType = 'NEUTRAL';\n  if (analysisDay.close > analysisDay.open) {\n    candleType = bodyPercent > 60 ? 'STRONG_BULL' : 'BULL';\n  } else if (analysisDay.close < analysisDay.open) {\n    candleType = bodyPercent > 60 ? 'STRONG_BEAR' : 'BEAR';\n  } else {\n    candleType = 'DOJI';\n  }\n\n  // Boost confidence for strong conviction candles\n  if (bodyPercent > 70 && direction !== 'NEUTRAL') {\n    confidence = Math.min(confidence + 10, 95);\n    reasoning += ` Strong conviction candle (${bodyPercent.toFixed(0)}% body).`;\n  }\n\n  console.log(`${pair}: BIAS = ${direction} (${confidence}%) - ${phase} - ${candleType}`);\n\n  // ============================================\n  // BUILD OUTPUT\n  // ============================================\n\n  results.push({\n    json: {\n      ...data,  // Pass through all previous data\n      \n      bias: {\n        direction,\n        confidence,\n        reasoning,\n        chartExplanation,\n        phase,\n        candleType\n      },\n\n      candleAnalysis: {\n        sweptReferenceHigh,\n        sweptReferenceLow,\n        closedAboveReferenceHigh,\n        closedBelowReferenceLow,\n        bodyPercent: Math.round(bodyPercent)\n      },\n\n      _debug: { ...data._debug, node: 'Calculate Bias' }\n    }\n  });\n}\n\nconsole.log(`\\n✅ Node 2 Complete: ${results.length} pairs processed`);\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2208,
+        1328
+      ],
+      "id": "73a7e401-acb2-49aa-aa5a-5de6f0066217",
+      "name": "Calculate Bias"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF2 NODE 3: CALCULATE DOL & CONFLUENCE\n// ============================================\n// VERSION: 4.0.0\n// \n// RESPONSIBILITIES:\n// - Determine oscillation context (reversal vs continuation)\n// - Calculate HTF direction\n// - Select primary and secondary DOL\n// - Detect confluence between levels\n// - Score confluence\n// - Generate DOL reasoning\n//\n// INPUT: Levels + Bias from Node 2\n// OUTPUT: DOL object with confluence data\n// ============================================\n\nconst items = $('Calculate Bias').all();\nconst results = [];\n\nconsole.log('========================================');\nconsole.log('WF2 v4.0.0 - Node 3: Calculate DOL & Confluence');\nconsole.log('========================================');\n\n// ============================================\n// HELPER FUNCTIONS\n// ============================================\n\nfunction formatPrice(price, decimals = 5) {\n  return typeof price === 'number' ? price.toFixed(decimals) : 'N/A';\n}\n\nfunction getDistanceInPips(price1, price2, pipMultiplier) {\n  if (!price1 || !price2) return 999;\n  return Math.abs(price1 - price2) * pipMultiplier;\n}\n\nfunction determineHTFDirection(biasDirection, oscillationContext) {\n  if (oscillationContext === 'PWH_SWEPT_REVERSAL' || oscillationContext === 'PWL_TAKEN_CONTINUATION') return 'BEARISH';\n  if (oscillationContext === 'PWL_SWEPT_REVERSAL' || oscillationContext === 'PWH_TAKEN_CONTINUATION') return 'BULLISH';\n  return biasDirection;\n}\n\n// ============================================\n// PROCESS EACH PAIR\n// ============================================\n\nfor (const item of items) {\n  const data = item.json;\n  const { pair, levels, bias, sessionLevels, marketData } = data;\n  const { pdh, pdl, pwh, pwl, pmh, pml } = levels;\n\n  console.log(`\\n--- Calculating DOL for ${pair} ---`);\n  console.log(`${pair}: Bias = ${bias.direction} (${bias.confidence}%)`);\n\n  // ============================================\n  // DETERMINE OSCILLATION CONTEXT\n  // ============================================\n\n  let oscillationContext = 'STANDARD_BIAS_BASED';\n  let primaryDOL = null;\n  let primaryDOLPrice = null;\n  let secondaryDOL = null;\n  let secondaryDOLPrice = null;\n  let dolConfidence = 'MEDIUM';\n  let dolReasoning = '';\n\n  // Check weekly level status first (higher TF takes precedence)\n  if (pwh.status === 'SWEPT' && pwh.price) {\n    oscillationContext = 'PWH_SWEPT_REVERSAL';\n    primaryDOL = 'PWL';\n    primaryDOLPrice = pwl.price;\n    secondaryDOL = 'PDL';\n    secondaryDOLPrice = pdl.price;\n    dolReasoning = `PWH SWEPT at ${formatPrice(pwh.price)}, expecting reversal to PWL at ${pwl.distancePips.toFixed(1)} pips.`;\n    dolConfidence = 'HIGH';\n\n  } else if (pwl.status === 'SWEPT' && pwl.price) {\n    oscillationContext = 'PWL_SWEPT_REVERSAL';\n    primaryDOL = 'PWH';\n    primaryDOLPrice = pwh.price;\n    secondaryDOL = 'PDH';\n    secondaryDOLPrice = pdh.price;\n    dolReasoning = `PWL SWEPT at ${formatPrice(pwl.price)}, expecting reversal to PWH at ${pwh.distancePips.toFixed(1)} pips.`;\n    dolConfidence = 'HIGH';\n\n  } else if (pwh.status === 'CLOSED_THROUGH') {\n    oscillationContext = 'PWH_TAKEN_CONTINUATION';\n    // Use PMH if available, otherwise PDH\n    if (pmh.price && pmh.inProximity) {\n      primaryDOL = 'PMH';\n      primaryDOLPrice = pmh.price;\n      dolReasoning = `PWH TAKEN, bullish momentum. PMH at ${pmh.distancePips.toFixed(1)} pips is next target.`;\n      dolConfidence = 'HIGH';\n    } else if (pmh.price) {\n      primaryDOL = 'PMH';\n      primaryDOLPrice = pmh.price;\n      dolReasoning = `PWH TAKEN, bullish continuation. PMH at ${pmh.distancePips.toFixed(1)} pips (extended target).`;\n      dolConfidence = 'MEDIUM';\n    } else {\n      primaryDOL = 'PDH';\n      primaryDOLPrice = pdh.price;\n      dolReasoning = `PWH TAKEN, bullish continuation. PDH at ${pdh.distancePips.toFixed(1)} pips is interim target.`;\n      dolConfidence = 'LOW';\n    }\n    secondaryDOL = 'INTERNAL_RETRACEMENT';\n    secondaryDOLPrice = null;\n\n  } else if (pwl.status === 'CLOSED_THROUGH') {\n    oscillationContext = 'PWL_TAKEN_CONTINUATION';\n    // Use PML if available, otherwise PDL\n    if (pml.price && pml.inProximity) {\n      primaryDOL = 'PML';\n      primaryDOLPrice = pml.price;\n      dolReasoning = `PWL TAKEN, bearish momentum. PML at ${pml.distancePips.toFixed(1)} pips is next target.`;\n      dolConfidence = 'HIGH';\n    } else if (pml.price) {\n      primaryDOL = 'PML';\n      primaryDOLPrice = pml.price;\n      dolReasoning = `PWL TAKEN, bearish continuation. PML at ${pml.distancePips.toFixed(1)} pips (extended target).`;\n      dolConfidence = 'MEDIUM';\n    } else {\n      primaryDOL = 'PDL';\n      primaryDOLPrice = pdl.price;\n      dolReasoning = `PWL TAKEN, bearish continuation. PDL at ${pdl.distancePips.toFixed(1)} pips is interim target.`;\n      dolConfidence = 'LOW';\n    }\n    secondaryDOL = 'INTERNAL_RETRACEMENT';\n    secondaryDOLPrice = null;\n\n  } else {\n    // ============================================\n    // STANDARD BIAS-BASED DOL\n    // ============================================\n    \n    if (bias.direction === 'BULLISH') {\n      primaryDOL = 'PDH';\n      primaryDOLPrice = pdh.price;\n      dolReasoning = `Bullish bias → PDH at ${pdh.distancePips.toFixed(1)} pips is primary target.`;\n      dolConfidence = 'HIGH';\n\n      // Check for closer session highs as intermediate targets\n      const sessionHighs = sessionLevels\n        .filter(sl => sl.expectedDirection === 'BEARISH' && sl.distancePips < pdh.distancePips)\n        .sort((a, b) => a.distancePips - b.distancePips);\n\n      if (sessionHighs.length > 0) {\n        const closest = sessionHighs[0];\n        dolReasoning += ` ${closest.levelType} (${closest.daysAgo}d ago) at ${closest.distancePips.toFixed(1)} pips is intermediate.`;\n      }\n\n      // Secondary: PWH\n      if (pwh.status === 'ACTIVE' && pwh.price) {\n        secondaryDOL = 'PWH';\n        secondaryDOLPrice = pwh.price;\n        dolReasoning += ` PWH at ${pwh.distancePips.toFixed(1)} pips is secondary.`;\n      }\n\n    } else if (bias.direction === 'BEARISH') {\n      primaryDOL = 'PDL';\n      primaryDOLPrice = pdl.price;\n      dolReasoning = `Bearish bias → PDL at ${pdl.distancePips.toFixed(1)} pips is primary target.`;\n      dolConfidence = 'HIGH';\n\n      // Check for closer session lows as intermediate targets\n      const sessionLows = sessionLevels\n        .filter(sl => sl.expectedDirection === 'BULLISH' && sl.distancePips < pdl.distancePips)\n        .sort((a, b) => a.distancePips - b.distancePips);\n\n      if (sessionLows.length > 0) {\n        const closest = sessionLows[0];\n        dolReasoning += ` ${closest.levelType} (${closest.daysAgo}d ago) at ${closest.distancePips.toFixed(1)} pips is intermediate.`;\n      }\n\n      // Secondary: PWL\n      if (pwl.status === 'ACTIVE' && pwl.price) {\n        secondaryDOL = 'PWL';\n        secondaryDOLPrice = pwl.price;\n        dolReasoning += ` PWL at ${pwl.distancePips.toFixed(1)} pips is secondary.`;\n      }\n\n    } else {\n      // NEUTRAL - range bound\n      primaryDOL = 'RANGE_BOUND';\n      primaryDOLPrice = pdh.distancePips < pdl.distancePips ? pdh.price : pdl.price;\n      dolReasoning = `Neutral bias → Watch for sweep of PDH (${pdh.distancePips.toFixed(1)} pips) or PDL (${pdl.distancePips.toFixed(1)} pips).`;\n      dolConfidence = 'LOW';\n\n      if (pdh.distancePips < pdl.distancePips) {\n        secondaryDOL = 'PDL';\n        secondaryDOLPrice = pdl.price;\n      } else {\n        secondaryDOL = 'PDH';\n        secondaryDOLPrice = pdh.price;\n      }\n\n      if (sessionLevels.length > 0) {\n        const closest = sessionLevels[0];\n        dolReasoning += ` Closest session: ${closest.levelType} at ${closest.distancePips.toFixed(1)} pips.`;\n      }\n    }\n  }\n\n  // HTF Direction\n  const htfDirection = determineHTFDirection(bias.direction, oscillationContext);\n\n  console.log(`${pair}: Oscillation = ${oscillationContext}`);\n  console.log(`${pair}: Primary DOL = ${primaryDOL} @ ${formatPrice(primaryDOLPrice)}`);\n  console.log(`${pair}: Secondary DOL = ${secondaryDOL} @ ${formatPrice(secondaryDOLPrice)}`);\n  console.log(`${pair}: HTF Direction = ${htfDirection}`);\n\n  // ============================================\n  // CONFLUENCE DETECTION\n  // ============================================\n\n  const confluenceThresholdPips = Math.max(10, marketData.dailyATRPips * 0.5);\n  const dolConfluenceLevels = [];\n  let dolConfluenceScore = 0;\n\n  if (primaryDOLPrice) {\n    // Build complete level list for confluence check\n    const allLevels = [\n      { name: 'PDH', price: pdh.price, source: 'DAILY', points: 10 },\n      { name: 'PDL', price: pdl.price, source: 'DAILY', points: 10 },\n      { name: 'PWH', price: pwh.price, source: 'WEEKLY', points: 15 },\n      { name: 'PWL', price: pwl.price, source: 'WEEKLY', points: 15 },\n      { name: 'PMH', price: pmh.price, source: 'MONTHLY', points: 25 },\n      { name: 'PML', price: pml.price, source: 'MONTHLY', points: 25 }\n    ].filter(l => l.price);\n\n    // Add session levels with age-based scoring\n    for (const sl of sessionLevels) {\n      const ageBonus = Math.max(0, 5 - sl.daysAgo);\n      allLevels.push({\n        name: sl.levelType,\n        price: sl.price,\n        source: 'SESSION',\n        points: 5 + ageBonus + (sl.priority / 2),\n        daysAgo: sl.daysAgo\n      });\n    }\n\n    // Check all levels for confluence with primary DOL\n    for (const level of allLevels) {\n      if (level.name === primaryDOL) continue;\n\n      const distanceToDOL = getDistanceInPips(level.price, primaryDOLPrice, marketData.pipMultiplier);\n\n      if (distanceToDOL <= confluenceThresholdPips) {\n        dolConfluenceLevels.push({\n          name: level.name,\n          price: level.price,\n          source: level.source,\n          distancePips: distanceToDOL.toFixed(1),\n          points: level.points\n        });\n        dolConfluenceScore += level.points;\n      }\n    }\n\n    // Sort by distance\n    dolConfluenceLevels.sort((a, b) => parseFloat(a.distancePips) - parseFloat(b.distancePips));\n  }\n\n  // Upgrade confidence based on confluence\n  if (dolConfluenceLevels.length >= 3) {\n    dolConfidence = 'VERY_HIGH';\n    dolReasoning += ` 🎯 STRONG CONFLUENCE: ${dolConfluenceLevels.map(l => l.name).join(', ')}.`;\n  } else if (dolConfluenceLevels.length >= 2) {\n    dolConfidence = 'VERY_HIGH';\n    dolReasoning += ` 🎯 CONFLUENCE: ${dolConfluenceLevels.map(l => l.name).join(', ')}.`;\n  } else if (dolConfluenceLevels.length === 1) {\n    if (dolConfidence === 'MEDIUM') dolConfidence = 'HIGH';\n    dolReasoning += ` Confluence with ${dolConfluenceLevels[0].name}.`;\n  }\n\n  console.log(`${pair}: Confluence = ${dolConfluenceLevels.length} levels (score: ${dolConfluenceScore})`);\n\n  // ============================================\n  // BUILD OUTPUT\n  // ============================================\n\n  results.push({\n    json: {\n      ...data,  // Pass through all previous data\n\n      dol: {\n        primary: primaryDOL,\n        primaryPrice: primaryDOLPrice,\n        secondary: secondaryDOL,\n        secondaryPrice: secondaryDOLPrice,\n        confidence: dolConfidence,\n        reasoning: dolReasoning,\n        oscillationContext,\n        htfDirection\n      },\n\n      confluence: {\n        hasConfluence: dolConfluenceLevels.length > 0,\n        count: dolConfluenceLevels.length,\n        score: dolConfluenceScore,\n        levels: dolConfluenceLevels,\n        thresholdPips: confluenceThresholdPips\n      },\n\n      _debug: { ...data._debug, node: 'Calculate DOL & Confluence' }\n    }\n  });\n}\n\nconsole.log(`\\n✅ Node 3 Complete: ${results.length} pairs processed`);\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2016,
+        1328
+      ],
+      "id": "9f88c1cc-ce32-4eec-824a-eb11a3c1065f",
+      "name": "Calculate DOL"
+    },
+    {
+      "parameters": {
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/key_levels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pair",
+              "value": "=eq.{{ $('Check Trading Day').item.json.pairClean }}"
+            },
+            {
+              "name": "date",
+              "value": "=gte.{{ $('Check Trading Day').item.json.sessionLevelStartDate }}"
+            },
+            {
+              "name": "status",
+              "value": "=eq.ACTIVE"
+            },
+            {
+              "name": "level_type",
+              "value": "in.(NY_HIGH,NY_LOW,LONDON_HIGH,LONDON_LOW,ASIA_HIGH,ASIA_LOW)"
+            },
+            {
+              "name": "order",
+              "value": "date.desc,created_at.desc"
+            },
+            {
+              "name": "select",
+              "value": "id,date,pair,level_type,price,status,expected_direction,created_at"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "168cb2e0-51c7-4b18-a14b-59415b25c3ec",
+      "name": "Fetch Session Levels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2752,
+        1136
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/detected_swings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pair",
+              "value": "=eq.{{ $('Check Trading Day').item.json.pairClean }}"
+            },
+            {
+              "name": "timeframe",
+              "value": "=in.(1H)"
+            },
+            {
+              "name": "swept",
+              "value": "=eq.false"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            },
+            {
+              "name": "order",
+              "value": "swing_time.desc"
+            },
+            {
+              "name": "select",
+              "value": "id,pair,timeframe,swing_type,swing_time,swing_price,swept,reversal_pattern,cisd_confirmed"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ee15e7bc-a9ec-46cd-925f-6fb622b1867c",
+      "name": "Fetch Swings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2752,
+        1328
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Data Collection\nPurpose: Fetch all required market data\n",
+        "height": 1040,
+        "width": 336,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -2864,
+        480
+      ],
+      "typeVersion": 1,
+      "id": "fb531a7d-56a1-426a-ad6e-9602a3ee272c",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF2 NODE 1: PROCESS CANDLES & EXTRACT LEVELS\n// ============================================\n// VERSION: 4.0.0\n// \n// RESPONSIBILITIES:\n// - Process raw candle data (weekend filter, Saturday close fix)\n// - Derive trading date and conditional storage flags\n// - Extract all key levels (PDH/PDL/PWH/PWL/PMH/PML)\n// - Calculate ATR and distances\n// - Calculate level statuses\n// - Process session levels and swing data\n//\n// INPUT: Raw candle data, session levels, swings from HTTP nodes\n// OUTPUT: Processed levels with metadata for bias calculation\n// ============================================\n\n// ============================================\n// GET DATA FROM PREVIOUS NODES\n// ============================================\n\nconst configItems = $('Check Trading Day').all();\nconst dailyItems = $('Fetch Daily Candles').all();\nconst weeklyItems = $('Fetch Weekly Candles').all();\nconst monthlyItems = $('Fetch Monthly Candles').all();\n\n// Session levels - handle if node doesn't exist\nlet allSessionLevels = [];\ntry {\n  const sessionItems = $('Fetch Session Levels').all();\n  for (const item of sessionItems) {\n    const data = item?.json;\n    if (Array.isArray(data)) allSessionLevels.push(...data);\n    else if (data?.id) allSessionLevels.push(data);\n  }\n} catch (e) {\n  console.log('Note: Fetch Session Levels node not found');\n}\n\n// Swing data - handle if node doesn't exist\nlet allSwingData = [];\ntry {\n  const swingItems = $('Fetch Swings').all();\n  for (const item of swingItems) {\n    const data = item?.json;\n    if (Array.isArray(data)) allSwingData.push(...data);\n    else if (data?.id) allSwingData.push(data);\n  }\n} catch (e) {\n  console.log('Note: Fetch Swings node not found');\n}\n\nconst results = [];\nconst errors = [];\n\nconsole.log('========================================');\nconsole.log('WF2 v4.0.0 - Node 1: Process Candles & Extract Levels');\nconsole.log(`Session levels: ${allSessionLevels.length}, Swings: ${allSwingData.length}`);\nconsole.log('========================================');\n\n// ============================================\n// HELPER FUNCTIONS\n// ============================================\n\nfunction getDayOfWeek(dateStr) {\n  return new Date(dateStr + 'T00:00:00Z').getUTCDay();\n}\n\nfunction getDayName(dateStr) {\n  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n  return days[getDayOfWeek(dateStr)];\n}\n\nfunction isSaturday(dateStr) { return getDayOfWeek(dateStr) === 6; }\nfunction isMonday(dateStr) { return getDayOfWeek(dateStr) === 1; }\n\nfunction isFirstTradingDayOfMonth(tradingDate, analysisDate) {\n  const t = new Date(tradingDate + 'T12:00:00Z');\n  const a = new Date(analysisDate + 'T12:00:00Z');\n  return t.getUTCMonth() !== a.getUTCMonth();\n}\n\nfunction formatPrice(price, decimals = 5) {\n  return typeof price === 'number' ? price.toFixed(decimals) : 'N/A';\n}\n\nfunction getDistanceInPips(price1, price2, pipMultiplier) {\n  if (!price1 || !price2) return 999;\n  return Math.abs(price1 - price2) * pipMultiplier;\n}\n\nfunction calculateATR(candles, startIdx, periods, fallback) {\n  if (candles.length < startIdx + periods + 1) return fallback;\n  let trSum = 0, count = 0;\n  for (let k = startIdx; k < startIdx + periods && candles[k + 1]; k++) {\n    const curr = candles[k], prev = candles[k + 1];\n    const tr = Math.max(curr.high - curr.low, Math.abs(curr.high - prev.close), Math.abs(curr.low - prev.close));\n    trSum += tr;\n    count++;\n  }\n  return count > 0 ? trSum / count : fallback;\n}\n\nfunction calculateLevelStatus(level, levelType, candles) {\n  if (!level) return 'ACTIVE';\n  for (const candle of candles) {\n    if (candle._isCurrentCandle) continue;\n    if (levelType === 'HIGH') {\n      if (candle.close > level) return 'CLOSED_THROUGH';\n      if (candle.high > level) return 'SWEPT';\n    } else {\n      if (candle.close < level) return 'CLOSED_THROUGH';\n      if (candle.low < level) return 'SWEPT';\n    }\n  }\n  return 'ACTIVE';\n}\n\nfunction getLatestSwing(pair, timeframe) {\n  const swings = allSwingData\n    .filter(s => s.pair === pair && s.timeframe === timeframe && !s.swept)\n    .sort((a, b) => new Date(b.swing_time) - new Date(a.swing_time));\n  if (swings.length === 0) return null;\n  return { type: swings[0].swing_type, price: parseFloat(swings[0].swing_price), time: swings[0].swing_time };\n}\n\nfunction getSessionLevelPriority(levelType) {\n  const priorities = { 'NY_HIGH': 10, 'NY_LOW': 10, 'LONDON_HIGH': 8, 'LONDON_LOW': 8, 'ASIA_HIGH': 4, 'ASIA_LOW': 4 };\n  return priorities[levelType] || 1;\n}\n\nfunction getDaysAgo(levelDate, tradingDate) {\n  const diff = new Date(tradingDate + 'T12:00:00Z') - new Date(levelDate + 'T12:00:00Z');\n  return Math.floor(diff / (1000 * 60 * 60 * 24));\n}\n\n// ============================================\n// PROCESS EACH PAIR\n// ============================================\n\nfor (let i = 0; i < configItems.length; i++) {\n  const config = configItems[i].json;\n  const dailyData = dailyItems[i]?.json;\n  const weeklyData = weeklyItems[i]?.json;\n  const monthlyData = monthlyItems[i]?.json;\n  const pair = config.pairClean;\n\n  console.log(`\\n--- Processing ${pair} ---`);\n\n  // Validate daily data\n  if (!dailyData?.values || dailyData.values.length < 5) {\n    errors.push({ pair, error: 'Insufficient daily data' });\n    continue;\n  }\n\n  // ============================================\n  // PROCESS CANDLES (weekend filter, Saturday close)\n  // ============================================\n  \n  const processedCandles = [];\n  const rawCandles = dailyData.values;\n\n  for (let j = 0; j < rawCandles.length; j++) {\n    const candle = rawCandles[j];\n    const dateOnly = candle.datetime.split(' ')[0];\n    const dayOfWeek = getDayOfWeek(dateOnly);\n\n    // Skip weekends\n    if (dayOfWeek === 0 || dayOfWeek === 6) continue;\n\n    // Friday: check for Saturday close correction\n    let trueClose = parseFloat(candle.close);\n    if (dayOfWeek === 5 && j > 0) {\n      const prevCandle = rawCandles[j - 1];\n      const prevDate = prevCandle.datetime.split(' ')[0];\n      if (isSaturday(prevDate)) {\n        trueClose = parseFloat(prevCandle.close);\n        console.log(`${pair}: Friday ${dateOnly} using Saturday's close: ${trueClose}`);\n      }\n    }\n\n    processedCandles.push({\n      datetime: candle.datetime,\n      date: dateOnly,\n      dayName: getDayName(dateOnly),\n      open: parseFloat(candle.open),\n      high: parseFloat(candle.high),\n      low: parseFloat(candle.low),\n      close: trueClose,\n      _corrected: trueClose !== parseFloat(candle.close),\n      _isCurrentCandle: processedCandles.length === 0\n    });\n  }\n\n  if (processedCandles.length < 4) {\n    errors.push({ pair, error: 'Insufficient weekday candles' });\n    continue;\n  }\n\n  // ============================================\n  // DERIVE KEY DATES AND FLAGS\n  // ============================================\n\n  const currentCandle = processedCandles[0];  // Incomplete (index 0)\n  const analysisDay = processedCandles[1];     // Just closed (index 1)\n  const referenceDay = processedCandles[2];    // Compare against (index 2)\n  const priorDay = processedCandles[3] || null;\n\n  const tradingDate = currentCandle.date;\n  const tradingDayName = currentCandle.dayName;\n  const shouldStoreWeeklyLevels = isMonday(tradingDate);\n  const shouldStoreMonthlyLevels = isFirstTradingDayOfMonth(tradingDate, analysisDay.date);\n\n  console.log(`${pair}: Trading Date: ${tradingDate} (${tradingDayName})`);\n  console.log(`${pair}: Store Weekly: ${shouldStoreWeeklyLevels}, Monthly: ${shouldStoreMonthlyLevels}`);\n\n  // ============================================\n  // EXTRACT KEY LEVELS\n  // ============================================\n\n  const pdh = analysisDay.high;\n  const pdl = analysisDay.low;\n  const pdc = analysisDay.close;\n  const currentPrice = pdc;\n\n  const pwh = weeklyData?.values?.[1] ? parseFloat(weeklyData.values[1].high) : null;\n  const pwl = weeklyData?.values?.[1] ? parseFloat(weeklyData.values[1].low) : null;\n  const pmh = monthlyData?.values?.[1] ? parseFloat(monthlyData.values[1].high) : null;\n  const pml = monthlyData?.values?.[1] ? parseFloat(monthlyData.values[1].low) : null;\n\n  // ============================================\n  // CALCULATE ATR\n  // ============================================\n\n  const dailyATR = calculateATR(processedCandles, 1, 14, config.typicalDailyATR || 0.006);\n  const dailyATRPips = dailyATR * config.pipMultiplier;\n\n  console.log(`${pair}: ATR: ${formatPrice(dailyATR)} (${dailyATRPips.toFixed(1)} pips)`);\n\n  // ============================================\n  // CALCULATE DISTANCES\n  // ============================================\n\n  const distToPDH = getDistanceInPips(pdh, currentPrice, config.pipMultiplier);\n  const distToPDL = getDistanceInPips(pdl, currentPrice, config.pipMultiplier);\n  const distToPWH = getDistanceInPips(pwh, currentPrice, config.pipMultiplier);\n  const distToPWL = getDistanceInPips(pwl, currentPrice, config.pipMultiplier);\n  const distToPMH = getDistanceInPips(pmh, currentPrice, config.pipMultiplier);\n  const distToPML = getDistanceInPips(pml, currentPrice, config.pipMultiplier);\n\n  // ============================================\n  // CALCULATE LEVEL STATUSES\n  // ============================================\n\n  const completedCandles = processedCandles.slice(1);\n  const recentForWeekly = completedCandles.slice(0, 3);\n  const recentForMonthly = completedCandles.slice(0, 10);\n\n  const pwhStatus = pwh ? calculateLevelStatus(pwh, 'HIGH', recentForWeekly) : 'ACTIVE';\n  const pwlStatus = pwl ? calculateLevelStatus(pwl, 'LOW', recentForWeekly) : 'ACTIVE';\n  const pmhStatus = pmh ? calculateLevelStatus(pmh, 'HIGH', recentForMonthly) : 'ACTIVE';\n  const pmlStatus = pml ? calculateLevelStatus(pml, 'LOW', recentForMonthly) : 'ACTIVE';\n\n  const maxSwingPips = config.maxSwingDOLPips || 150;\n  const pmhInProximity = pmh ? distToPMH <= maxSwingPips : false;\n  const pmlInProximity = pml ? distToPML <= maxSwingPips : false;\n\n  console.log(`${pair}: PDH=${formatPrice(pdh)}, PDL=${formatPrice(pdl)}`);\n  console.log(`${pair}: PWH=${formatPrice(pwh)} (${pwhStatus}), PWL=${formatPrice(pwl)} (${pwlStatus})`);\n\n  // ============================================\n  // PROCESS SESSION LEVELS\n  // ============================================\n\n  const pairSessionLevels = allSessionLevels\n    .filter(sl => sl.pair === pair && sl.status === 'ACTIVE')\n    .map(sl => ({\n      id: sl.id,\n      date: sl.date,\n      levelType: sl.level_type,\n      price: parseFloat(sl.price),\n      status: sl.status,\n      expectedDirection: sl.expected_direction,\n      priority: getSessionLevelPriority(sl.level_type),\n      daysAgo: getDaysAgo(sl.date, tradingDate),\n      distancePips: getDistanceInPips(parseFloat(sl.price), currentPrice, config.pipMultiplier),\n      source: 'SESSION'\n    }))\n    .sort((a, b) => a.daysAgo - b.daysAgo || b.priority - a.priority || a.distancePips - b.distancePips);\n\n  console.log(`${pair}: ${pairSessionLevels.length} active session levels`);\n\n  // ============================================\n  // PROCESS SWING DATA\n  // ============================================\n\n  const swingData = {\n    '1H': getLatestSwing(pair, '1H'),\n    '4H': getLatestSwing(pair, '4H')\n  };\n\n  if (swingData['1H']) console.log(`${pair}: 1H swing: ${swingData['1H'].type} @ ${formatPrice(swingData['1H'].price)}`);\n  if (swingData['4H']) console.log(`${pair}: 4H swing: ${swingData['4H'].type} @ ${formatPrice(swingData['4H'].price)}`);\n\n  // ============================================\n  // BUILD OUTPUT\n  // ============================================\n\n  results.push({\n    json: {\n      config,\n      pair,\n      tradingDate,\n      tradingDayName,\n      storageFlags: { shouldStoreWeeklyLevels, shouldStoreMonthlyLevels },\n      \n      candles: {\n        analysisDay: { ...analysisDay },\n        referenceDay: { date: referenceDay.date, dayName: referenceDay.dayName, high: referenceDay.high, low: referenceDay.low, close: referenceDay.close },\n        priorDay: priorDay ? { date: priorDay.date, dayName: priorDay.dayName } : null\n      },\n\n      levels: {\n        pdh: { price: pdh, status: 'ACTIVE', distancePips: distToPDH },\n        pdl: { price: pdl, status: 'ACTIVE', distancePips: distToPDL },\n        pwh: { price: pwh, status: pwhStatus, distancePips: distToPWH },\n        pwl: { price: pwl, status: pwlStatus, distancePips: distToPWL },\n        pmh: { price: pmh, status: pmhStatus, distancePips: distToPMH, inProximity: pmhInProximity },\n        pml: { price: pml, status: pmlStatus, distancePips: distToPML, inProximity: pmlInProximity }\n      },\n\n      sessionLevels: pairSessionLevels,\n      swingData,\n\n      marketData: {\n        currentPrice,\n        equilibrium: (pdh + pdl) / 2,\n        dailyATR,\n        dailyATRPips,\n        pipMultiplier: config.pipMultiplier,\n        prevClose: pdc\n      },\n\n      _debug: { version: 'v4.0.0', node: 'Process Candles & Extract Levels' }\n    }\n  });\n}\n\nconsole.log(`\\n✅ Node 1 Complete: ${results.length} pairs processed, ${errors.length} errors`);\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        1328
+      ],
+      "id": "89b5477c-37bf-4869-afdd-ec54cc276a6f",
+      "name": "Process Candles"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF2 NODE 4: BUILD OUTPUT\n// ============================================\n// VERSION: 4.0.0\n// \n// RESPONSIBILITIES:\n// - Assemble keyLevels array for upsert (PDH/PDL)\n// - Assemble weeklyLevels array (conditional)\n// - Assemble monthlyLevels array (conditional)\n// - Build dailyContext object matching table schema\n// - Build analysis object for extended data\n// - Build notification object for Discord\n//\n// INPUT: All processed data from Node 3\n// OUTPUT: Structured data ready for DB upsert and notifications\n// ============================================\n\nconst items = $('Calculate DOL').all();\nconst results = [];\n\nconsole.log('========================================');\nconsole.log('WF2 v4.0.0 - Node 4: Build Output');\nconsole.log('========================================');\n\n// ============================================\n// HELPER FUNCTIONS\n// ============================================\n\nfunction formatPrice(price, decimals = 5) {\n  return typeof price === 'number' ? price.toFixed(decimals) : 'N/A';\n}\n\n// ============================================\n// PROCESS EACH PAIR\n// ============================================\n\nfor (const item of items) {\n  const data = item.json;\n  const {\n    pair, tradingDate, tradingDayName, storageFlags,\n    candles, levels, sessionLevels, swingData, marketData,\n    bias, candleAnalysis, dol, confluence\n  } = data;\n\n  console.log(`\\n--- Building Output for ${pair} ---`);\n\n  const { pdh, pdl, pwh, pwl, pmh, pml } = levels;\n\n  // ============================================\n  // KEY LEVELS (Always store PDH/PDL)\n  // ============================================\n\n  const keyLevels = [\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PDH',\n      price: pdh.price,\n      status: pdh.status,\n      is_tradeable: true,\n      expected_direction: 'BEARISH'\n    },\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PDL',\n      price: pdl.price,\n      status: pdl.status,\n      is_tradeable: true,\n      expected_direction: 'BULLISH'\n    }\n  ];\n\n  // ============================================\n  // WEEKLY LEVELS (Conditional - Monday only)\n  // ============================================\n\n  const weeklyLevels = (storageFlags.shouldStoreWeeklyLevels && pwh.price && pwl.price) ? [\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PWH',\n      price: pwh.price,\n      status: pwh.status,\n      is_tradeable: true,\n      expected_direction: 'BEARISH'\n    },\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PWL',\n      price: pwl.price,\n      status: pwl.status,\n      is_tradeable: true,\n      expected_direction: 'BULLISH'\n    }\n  ] : [];\n\n  // ============================================\n  // MONTHLY LEVELS (Conditional - 1st trading day)\n  // ============================================\n\n  const monthlyLevels = (storageFlags.shouldStoreMonthlyLevels && pmh.price && pml.price) ? [\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PMH',\n      price: pmh.price,\n      status: pmh.status,\n      is_tradeable: pmh.inProximity,\n      expected_direction: 'BEARISH'\n    },\n    {\n      date: tradingDate,\n      pair: pair,\n      level_type: 'PML',\n      price: pml.price,\n      status: pml.status,\n      is_tradeable: pml.inProximity,\n      expected_direction: 'BULLISH'\n    }\n  ] : [];\n\n  console.log(`${pair}: Key levels: ${keyLevels.length}, Weekly: ${weeklyLevels.length}, Monthly: ${monthlyLevels.length}`);\n\n  // ============================================\n  // DAILY CONTEXT (Matches table schema exactly)\n  // ============================================\n\n  const dailyContext = {\n    date: tradingDate,\n    pair: pair,\n    daily_bias: bias.direction,\n    bias_confidence: bias.confidence,\n    bias_reasoning: bias.reasoning,\n    pdh: pdh.price,\n    pdl: pdl.price,\n    prev_close: marketData.prevClose,\n    prev_day_swept_pdh: candleAnalysis.sweptReferenceHigh,\n    prev_day_swept_pdl: candleAnalysis.sweptReferenceLow,\n    prev_day_closed_above_pdh: candleAnalysis.closedAboveReferenceHigh,\n    prev_day_closed_below_pdl: candleAnalysis.closedBelowReferenceLow,\n    pwh: pwh.price,\n    pwl: pwl.price,\n    htf_direction: dol.htfDirection,\n    last_1h_swing_type: swingData?.['1H']?.type || null,\n    last_1h_swing_price: swingData?.['1H']?.price || null,\n    last_4h_swing_type: swingData?.['4H']?.type || null,\n    last_4h_swing_price: swingData?.['4H']?.price || null,\n    primary_dol: dol.primary,\n    primary_dol_price: dol.primaryPrice,\n    primary_dol_reasoning: dol.reasoning,\n    secondary_dol: dol.secondary,\n    secondary_dol_price: dol.secondaryPrice\n  };\n\n  // ============================================\n  // ANALYSIS (Extended data - not for DB)\n  // ============================================\n\n  const analysis = {\n    dailyATR: marketData.dailyATR,\n    dailyATRPips: marketData.dailyATRPips,\n    currentPhase: bias.phase,\n    candleType: bias.candleType,\n    oscillationContext: dol.oscillationContext,\n    dolConfidence: dol.confidence,\n    equilibrium: marketData.equilibrium,\n    currentPrice: marketData.currentPrice,\n    dolConfluence: {\n      hasConfluence: confluence.hasConfluence,\n      confluenceCount: confluence.count,\n      confluenceScore: confluence.score,\n      confluentLevels: confluence.levels,\n      thresholdPips: confluence.thresholdPips\n    },\n    sessionLevelsActive: sessionLevels.length,\n    levelStatuses: {\n      pdh: { price: pdh.price, status: pdh.status, distance: pdh.distancePips },\n      pdl: { price: pdl.price, status: pdl.status, distance: pdl.distancePips },\n      pwh: { price: pwh.price, status: pwh.status, distance: pwh.distancePips },\n      pwl: { price: pwl.price, status: pwl.status, distance: pwl.distancePips },\n      pmh: { price: pmh.price, status: pmh.status, distance: pmh.distancePips, inProximity: pmh.inProximity },\n      pml: { price: pml.price, status: pml.status, distance: pml.distancePips, inProximity: pml.inProximity }\n    },\n    sessionLevels: sessionLevels.slice(0, 10).map(sl => ({\n      type: sl.levelType,\n      price: sl.price,\n      daysAgo: sl.daysAgo,\n      distancePips: sl.distancePips.toFixed(1)\n    }))\n  };\n\n  // ============================================\n  // NOTIFICATION (For Discord)\n  // ============================================\n\n  const biasEmoji = bias.direction === 'BULLISH' ? '📈' : bias.direction === 'BEARISH' ? '📉' : '📊';\n  const confidenceEmoji = dol.confidence === 'VERY_HIGH' ? '🎯' : dol.confidence === 'HIGH' ? '✅' : dol.confidence === 'MEDIUM' ? '⚠️' : '❓';\n\n  const notification = {\n    pair: pair,\n    tradingDate: tradingDate,\n    tradingDayName: tradingDayName,\n    \n    // Bias summary\n    bias: bias.direction,\n    confidence: bias.confidence,\n    phase: bias.phase,\n    reasoning: bias.reasoning,\n    chartExplanation: bias.chartExplanation,\n    candleType: bias.candleType,\n    \n    // DOL summary\n    primaryDOL: dol.primary,\n    primaryDOLPrice: dol.primaryPrice,\n    secondaryDOL: dol.secondary,\n    secondaryDOLPrice: dol.secondaryPrice,\n    dolConfidence: dol.confidence,\n    dolReasoning: dol.reasoning,\n    htfDirection: dol.htfDirection,\n    \n    // Confluence\n    hasConfluence: confluence.hasConfluence,\n    confluenceCount: confluence.count,\n    confluenceScore: confluence.score,\n    confluentLevels: confluence.levels.map(l => l.name).join(', '),\n    \n    // Key levels for display\n    pdh: formatPrice(pdh.price),\n    pdl: formatPrice(pdl.price),\n    pwh: formatPrice(pwh.price),\n    pwl: formatPrice(pwl.price),\n    dailyATRPips: marketData.dailyATRPips.toFixed(1),\n    \n    // Pre-formatted message\n    summaryMessage: `${biasEmoji} **${pair}** - ${tradingDayName}\\n` +\n      `**Bias**: ${bias.direction} (${bias.confidence}%) - ${bias.phase}\\n` +\n      `**DOL**: ${dol.primary} @ ${formatPrice(dol.primaryPrice)} ${confidenceEmoji}\\n` +\n      (confluence.hasConfluence ? `**Confluence**: ${confluence.levels.map(l => l.name).join(', ')}\\n` : '') +\n      `**Levels**: PDH ${formatPrice(pdh.price)} | PDL ${formatPrice(pdl.price)}`\n  };\n\n  console.log(`${pair}: Output ready for upsert`);\n\n  // ============================================\n  // BUILD FINAL OUTPUT\n  // ============================================\n\n  results.push({\n    json: {\n      pair,\n      date: tradingDate,\n      \n      // For database upserts\n      keyLevels,\n      weeklyLevels,\n      monthlyLevels,\n      dailyContext,\n      \n      // For internal use / notifications\n      analysis,\n      notification,\n      \n      _debug: { version: 'v4.0.0', node: 'Build Output', processedAt: new Date().toISOString() }\n    }\n  });\n}\n\nconsole.log(`\\n✅ Node 4 Complete: ${results.length} pairs ready for upsert`);\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1824,
+        1328
+      ],
+      "id": "58ef72cf-d682-4bae-b669-3536a430ec27",
+      "name": "Build Output"
+    },
+    {
+      "parameters": {
+        "content": "## Processing Pipeline\nPurpose: Transform raw data into trading intelligence\nData flows forward through pipeline",
+        "height": 304,
+        "width": 992
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -2448,
+        1216
+      ],
+      "typeVersion": 1,
+      "id": "a4f3b83e-c692-4726-bc26-8ac70cfb7304",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8a662ee1-f866-4412-92c9-73a075d1ca60",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -416,
+        1568
+      ],
+      "id": "532a3327-9815-4e82-b104-6944fba60a3f",
+      "name": "Context Successful?"
+    },
+    {
+      "parameters": {
+        "content": "## Error Handling\nEach node logs with pair prefix - Debug object tracks errors",
+        "height": 272,
+        "width": 512,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        0,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "b136a3a6-e0e1-46e5-a514-98bb796d08a3",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## Error Handling\nEach node logs with pair prefix - Debug object tracks errors",
+        "height": 272,
+        "width": 512,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        0,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "ef372355-4349-4602-bb4b-6c8f0a4dc013",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## Error Handling\nEach node logs with pair prefix - Debug object tracks errors",
+        "height": 272,
+        "width": 512,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        0,
+        608
+      ],
+      "typeVersion": 1,
+      "id": "b84eae81-5c52-4bc4-ab0c-f6f5b807f2d8",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## Success Notification\nSend Notificiation with Daily Bias",
+        "height": 256,
+        "width": 688,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        0,
+        1456
+      ],
+      "typeVersion": 1,
+      "id": "05f676a5-60ec-498f-b76f-fbc9930586c9",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "## Data Persistence\nPurpose: Store results in Supabase\n",
+        "height": 560,
+        "width": 1136,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1344,
+        1216
+      ],
+      "typeVersion": 1,
+      "id": "63a822f1-657b-4838-9548-69385b7228c0",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.notification.discordText }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        256,
+        1552
+      ],
+      "id": "c3a4fc3f-4303-425a-a786-07bc6185b504",
+      "name": "Discord",
+      "webhookId": "012a5a0a-c011-4c4c-95a1-8e294551aba9",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "bdOXP1JVHUCdvHN8",
+          "name": "Daily bias"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE TWELVEDATA API RESPONSES (Multi-Source)\n// ============================================\n\nconst items = $input.all();\nconst errors = [];\nconst validItems = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Try to identify the source/timeframe\n  const source = data.meta?.interval || data.interval || 'unknown';\n  const pair = data.meta?.symbol || data.symbol || 'unknown';\n  \n  // Check for API error responses\n  if (data.code || data.status === 'error') {\n    errors.push({\n      type: 'API_ERROR',\n      source: source,\n      pair: pair,\n      message: data.message || 'Unknown API error',\n      code: data.code\n    });\n    continue;\n  }\n  \n  // Check for rate limit errors\n  if (data.message && data.message.includes('API credits')) {\n    errors.push({\n      type: 'RATE_LIMIT',\n      source: source,\n      pair: pair,\n      message: data.message\n    });\n    continue;\n  }\n  \n  // Check for empty values array\n  if (!data.values || !Array.isArray(data.values) || data.values.length === 0) {\n    errors.push({\n      type: 'NO_DATA',\n      source: source,\n      pair: pair,\n      message: 'No candle data returned'\n    });\n    continue;\n  }\n  \n  // Validate candle data structure\n  const firstCandle = data.values[0];\n  if (!firstCandle.open || !firstCandle.high || !firstCandle.low || !firstCandle.close) {\n    errors.push({\n      type: 'INVALID_DATA',\n      source: source,\n      pair: pair,\n      message: 'Candle missing OHLC fields'\n    });\n    continue;\n  }\n  \n  // Data is valid - tag it with source for downstream\n  item.json._source = source;\n  item.json._pair = pair;\n  validItems.push(item);\n}\n\n// If we have errors\nif (errors.length > 0) {\n  const errorSummary = errors.map(e => `${e.source}/${e.pair}: ${e.type}`).join(', ');\n  console.log('❌ API Validation Errors:', errorSummary);\n  \n  return [{\n    json: {\n      hasErrors: true,\n      errors: errors,\n      errorCount: errors.length,\n      validCount: validItems.length,\n      errorSummary: errorSummary,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nconsole.log(`✅ Validated ${validItems.length} API responses from all sources`);\nreturn validItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2240,
+        784
+      ],
+      "id": "592ce1e4-429b-4cf4-9cc8-d9835e3bbd1a",
+      "name": "✅ Validate API Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6249bde9-5196-4659-ab93-db52da6f7dd8",
+              "leftValue": "={{ $json.hasErrors }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2032,
+        784
+      ],
+      "id": "0a806816-a841-4f66-8e30-a2481f3e3b54",
+      "name": "Has API Errors?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255314492653588/M0iMq2_4AbtnxSEaBS9DJe92VFRINjEDWtMDNSKw0-m5D2cKAxV_IwpEdtU9yGAQIZRY  ",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"🔴 WF2 TwelveData API Error\",\n    \"color\": 15548997,\n    \"fields\": [\n      {\n        \"name\": \"Errors\",\n        \"value\": \"{{ $json.errorSummary }}\",\n        \"inline\": false\n      },\n      {\n        \"name\": \"Error Count\",\n        \"value\": \"{{ $json.errorCount }}\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Valid Count\",\n        \"value\": \"{{ $json.validCount }}\",\n        \"inline\": true\n      }\n    ],\n    \"timestamp\": \"{{ $json.timestamp }}\"\n  }]\n}\n",
+        "options": {}
+      },
+      "id": "570a58c2-4e8b-4d47-adba-1a9b545d6b6d",
+      "name": "🚨 Discord API Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1808,
+        768
+      ],
+      "notes": "Only triggered on error path"
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "={{ $('Check Trading Day').item.json.pair }}"
+            },
+            {
+              "name": "interval",
+              "value": "1week"
+            },
+            {
+              "name": "outputsize",
+              "value": "4"
+            },
+            {
+              "name": "apikey",
+              "value": "d9d8976ee9a54997a9b32b5afffa9be0"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "id": "516d6e91-913a-4097-b204-157736c2630c",
+      "name": "Fetch Weekly Candles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2752,
+        784
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -2464,
+        768
+      ],
+      "id": "18a674da-c20a-4d43-84b7-2233fa62e18c",
+      "name": "Merge"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Has Errors?": {
+      "main": [
+        [
+          {
+            "node": "⚠️ Build Calculation Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Key Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Levels Response": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Prepare Daily Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⚠️ Build Error Key Level Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Discord Summary": {
+      "main": [
+        [
+          {
+            "node": "Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Trading Day": {
+      "main": [
+        [
+          {
+            "node": "Fetch Daily Candles",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Weekly Candles",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Monthly Candles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Daily Candles": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Monthly Candles": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Prepare Key Levels": {
+      "main": [
+        [
+          {
+            "node": "Upsert Key Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Build Error Key Level Upsert": {
+      "main": [
+        [
+          {
+            "node": "Send Upsert Error to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Key Levels": {
+      "main": [
+        [
+          {
+            "node": "Check Levels Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Daily Context": {
+      "main": [
+        [
+          {
+            "node": "Upsert Daily Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Daily Context": {
+      "main": [
+        [
+          {
+            "node": "Check Context Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Build Calculation Error Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Error to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Build Context Error Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Context Error to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Context Response": {
+      "main": [
+        [
+          {
+            "node": "Context Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 17:05 NY Mon-Fri": {
+      "main": [
+        [
+          {
+            "node": "Check Trading Day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Bias": {
+      "main": [
+        [
+          {
+            "node": "Calculate DOL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate DOL": {
+      "main": [
+        [
+          {
+            "node": "Build Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Session Levels": {
+      "main": [
+        [
+          {
+            "node": "Fetch Swings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Swings": {
+      "main": [
+        [
+          {
+            "node": "Process Candles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Candles": {
+      "main": [
+        [
+          {
+            "node": "Calculate Bias",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Output": {
+      "main": [
+        [
+          {
+            "node": "Has Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context Successful?": {
+      "main": [
+        [
+          {
+            "node": "Build Discord Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⚠️ Build Context Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord": {
+      "main": [
+        [
+          {
+            "node": "Log Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Validate API Response": {
+      "main": [
+        [
+          {
+            "node": "Has API Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has API Errors?": {
+      "main": [
+        [
+          {
+            "node": "🚨 Discord API Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Session Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Weekly Candles": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "✅ Validate API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "ZXiIfbwA3d00Lai2XTM8G",
+    "timezone": "America/New_York"
+  },
+  "versionId": "8715047b-a60e-495f-bc02-f45e6e44082f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "aj9zmetYnYjHQeuCMVJsj",
+  "tags": [
+    {
+      "updatedAt": "2026-01-28T07:18:41.307Z",
+      "createdAt": "2026-01-28T07:18:41.307Z",
+      "id": "EdBl1FH018hG0qXg",
+      "name": "Data Collection"
+    },
+    {
+      "updatedAt": "2026-01-28T07:18:41.314Z",
+      "createdAt": "2026-01-28T07:18:41.314Z",
+      "id": "WEG2U0BUNHGQv7rq",
+      "name": "Production"
+    }
+  ]
+}

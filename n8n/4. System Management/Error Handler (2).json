@@ -1,0 +1,148 @@
+{
+  "name": "Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        912,
+        224
+      ],
+      "id": "63f250f9-4731-4749-bb98-4e863b46c608",
+      "name": "⚡ Error Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EXTRACT & FORMAT ERROR DETAILS\n// ============================================\n\nconst error = $input.first().json;\n\n// Extract all available error information\nconst workflow_name = error.workflow?.name || 'Unknown Workflow';\nconst execution_id = error.execution?.id || null;\nconst node_name = error.execution?.lastNodeExecuted || null;\nconst error_message = error.execution?.error?.message || 'Unknown error';\nconst error_stack = error.execution?.error?.stack || null;\nconst error_description = error.execution?.error?.description || null;\nconst timestamp = new Date().toISOString();\n\n// Build detailed context object\nconst context = {\n  execution_id: execution_id,\n  error_stack: error_stack,\n  error_description: error_description,\n  mode: error.execution?.mode || null,\n  retryOf: error.execution?.retryOf || null,\n  startedAt: error.execution?.startedAt || null,\n  stoppedAt: error.execution?.stoppedAt || null,\n  workflowId: error.workflow?.id || null\n};\n\n// Determine severity (could be enhanced with pattern matching)\nconst log_level = 'ERROR';\n\n// Discord embed color\nconst embedColor = 15548997; // Red\nconst emoji = '🔴';\n\nreturn {\n  json: {\n    // For database insert\n    db_record: {\n      workflow_name: workflow_name,\n      execution_id: execution_id,\n      log_level: log_level,\n      message: error_message,\n      node_name: node_name,\n      context: JSON.stringify(context),\n      created_at: timestamp\n    },\n    \n    // For Discord\n    discord_embed: {\n      title: `${emoji} ${workflow_name} - ${log_level}`,\n      color: embedColor,\n      description: error_message.substring(0, 2000),\n      fields: [\n        {\n          name: 'Workflow',\n          value: workflow_name,\n          inline: true\n        },\n        {\n          name: 'Node',\n          value: node_name || 'N/A',\n          inline: true\n        },\n        {\n          name: 'Execution ID',\n          value: execution_id || 'N/A',\n          inline: true\n        }\n      ],\n      timestamp: timestamp\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        224
+      ],
+      "id": "ab664f26-9097-4585-ba1a-42ea52ab4d42",
+      "name": "📋 Format Error Data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/workflow_logs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.db_record) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "80f0035e-e448-4eed-9fb7-8fe8c5ef92ed",
+      "name": "💾 Log to Database",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        224
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255314492653588/M0iMq2_4AbtnxSEaBS9DJe92VFRINjEDWtMDNSKw0-m5D2cKAxV_IwpEdtU9yGAQIZRY",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{{ JSON.stringify($('📋 Format Error Data').first().json.discord_embed) }}]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "9814e2fe-c2be-485f-9305-fa0d754e33df",
+      "name": "📢 Send Discord Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1584,
+        224
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "⚡ Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "📋 Format Error Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Format Error Data": {
+      "main": [
+        [
+          {
+            "node": "💾 Log to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Log to Database": {
+      "main": [
+        [
+          {
+            "node": "📢 Send Discord Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "9d68d26f-0445-445d-b1a1-d3e610a820e8",
+  "meta": {
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "ZXiIfbwA3d00Lai2XTM8G",
+  "tags": []
+}

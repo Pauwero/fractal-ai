@@ -1,0 +1,77 @@
+{
+  "migration_tasks": [
+    {
+      "id": "M0-001",
+      "description": "Create project skeleton and directory structure",
+      "phase": "M0",
+      "domain": "infrastructure",
+      "status": "passing",
+      "tests": 7,
+      "completed_date": "2026-02-27"
+    },
+    {
+      "id": "M0-002",
+      "description": "Write CLAUDE.md with full project context",
+      "phase": "M0",
+      "domain": "infrastructure",
+      "status": "passing",
+      "tests": 0,
+      "completed_date": "2026-02-27"
+    },
+    {
+      "id": "M0-003",
+      "description": "Configure pyproject.toml with dependencies",
+      "phase": "M0",
+      "domain": "infrastructure",
+      "status": "passing",
+      "tests": 0,
+      "completed_date": "2026-02-27"
+    },
+    {
+      "id": "M0-004",
+      "description": "Docker Compose with Python container",
+      "phase": "M0",
+      "domain": "infrastructure",
+      "status": "passing",
+      "tests": 0,
+      "completed_date": "2026-02-27"
+    },
+    {
+      "id": "M0-005",
+      "description": "GitHub Actions workflow for tests and lint",
+      "phase": "M0",
+      "domain": "infrastructure",
+      "status": "passing",
+      "tests": 0,
+      "completed_date": "2026-02-27"
+    },
+    {
+      "id": "M0-006",
+      "description": "GLOSSARY.md committed",
+      "phase": "M0",
+      "domain": "documentation",
+      "status": "passing",
+      "tests": 0,
+      "completed_date": "2026-02-27"
+    },
+    {
+      "id": "M0-007",
+      "description": "Blueprint committed to docs/architecture/",
+      "phase": "M0",
+      "domain": "documentation",
+      "status": "pending",
+      "tests": 0,
+      "completed_date": null,
+      "notes": "Robin needs to copy blueprint + diagrams to docs/architecture/"
+    },
+    {
+      "id": "MIG-001",
+      "description": "Port swing detection from SQL to Python",
+      "phase": "M1",
+      "domain": "structure",
+      "status": "not_started",
+      "tests": 0,
+      "completed_date": null
+    }
+  ]
+}

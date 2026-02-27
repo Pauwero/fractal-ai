@@ -1,0 +1,138 @@
+---
+title: "Fractal AI — Target State Architecture"
+---
+graph TB
+    subgraph External["External Services"]
+        TD["TwelveData API"]
+        BK["Broker API\n(Future)"]
+        DC["Discord\n(Alerts)"]
+    end
+
+    subgraph GitHub["GitHub (Version Control + CI/CD)"]
+        REPO["Pauwero/fractal-ai\n(Single Source of Truth)"]
+        GHA["GitHub Actions\n🧪 Tests on every push\n🔍 Lint + type check\n🚀 Auto-deploy to VPS"]
+    end
+
+    subgraph Dev["Development Environment"]
+        VSCODE["VS Code + Claude Code\n(AI-Assisted Development)"]
+        CLAUDE_MD["CLAUDE.md\n(AI Agent Context)"]
+        PROGRESS["claude-progress.txt\n(Session Continuity)"]
+    end
+
+    subgraph Hetzner["Hetzner VPS — Docker Compose"]
+        subgraph API_Layer["FastAPI (Python)"]
+            EP_DATA["/api/data/sync"]
+            EP_STRAT["/api/strategy/evaluate"]
+            EP_TRADE["/api/trades/monitor"]
+            EP_HEALTH["/api/health"]
+        end
+
+        subgraph Python_App["Python Application Layer"]
+            subgraph Domain_Market["📊 Market Data Domain"]
+                ACL["Anti-Corruption Layer\n(TwelveData Adapter)"]
+                DV["Data Validation\n(Gaps, dupes, bad candles)"]
+            end
+
+            subgraph Domain_Structure["🔍 Structure Detection Domain"]
+                SD["Swing Detection"]
+                LD["Level Detection"]
+                PR["Pattern Recognition"]
+                CD["CISD Detection"]
+            end
+
+            subgraph Domain_Strategy["🎯 Strategy Domain"]
+                SE["Strategy Engine\n(Config-Driven)"]
+                FI["Filters"]
+                SC["Scoring Models"]
+                CFG["Strategy Configs\n(JSON files in Git)"]
+            end
+
+            subgraph Domain_Execution["💰 Execution Domain"]
+                TM["Trade Manager"]
+                RM["Risk Manager"]
+                PM["Portfolio Manager\n(Correlation, Exposure)"]
+            end
+
+            subgraph Domain_Research["🔬 Research Domain"]
+                BT["Backtester\n(vectorbt)"]
+                QS["Performance Analytics\n(quantstats)"]
+                KC["Knowledge Chain\nH→Q→F→C→R→S"]
+                VAL["Monthly Re-Validation\n(Automated)"]
+            end
+
+            subgraph Domain_Observe["👁 Observability Domain"]
+                LOG["Structured Logging\n(structlog)"]
+                HC["Health Checks\n(Per-domain)"]
+                MET["Metrics Collection"]
+                AL["Alert Formatting"]
+            end
+
+            EB["Event Bus\nCandleClosed · SwingDetected\nPatternFormed · SignalGenerated\nTradeOpened · TradeClosed"]
+        end
+
+        subgraph N8N_Simple["N8N (Scheduler Only)"]
+            SCH["⏱ Timers\nEvery 5M / 2H / Daily"]
+        end
+    end
+
+    subgraph Supabase["Supabase (Data Store Only)"]
+        DB_PROD["Production DB\n(OHLC, trades, signals)"]
+        DB_RES["Research DB\n(Historical data, findings)"]
+    end
+
+    subgraph Lovable_App["Lovable (Dashboard)"]
+        DASH["Trading Dashboard\n(React + Supabase)"]
+    end
+
+    %% Data flow
+    TD -->|"REST API"| ACL
+    ACL --> DV
+    DV -->|"CandleClosed"| EB
+
+    EB --> Domain_Structure
+    Domain_Structure -->|"SwingDetected\nPatternFormed\nCISDDetected"| EB
+
+    EB --> SE
+    SE --> FI
+    FI --> SC
+    SC -->|"SignalGenerated"| EB
+
+    EB --> TM
+    TM --> RM
+    RM --> PM
+    PM -->|"TradeOpened\nTradeClosed"| EB
+
+    EB --> Domain_Observe
+    AL --> DC
+
+    TM -.->|"Future"| BK
+
+    %% Infrastructure
+    SCH -->|"HTTP calls"| API_Layer
+    API_Layer --> Python_App
+    Python_App --> DB_PROD
+    Domain_Research --> DB_RES
+
+    VSCODE --> REPO
+    REPO --> GHA
+    GHA -->|"Deploy"| Hetzner
+
+    DASH -.-> DB_PROD
+
+    CFG -.->|"Strategy as\nConfiguration"| SE
+
+    style External fill:#f0f0f0,stroke:#999
+    style GitHub fill:#f0f8e8,stroke:#4a4
+    style Dev fill:#f4f0e8,stroke:#a96
+    style Hetzner fill:#e8f4e8,stroke:#4a9
+    style API_Layer fill:#e8e8f4,stroke:#66a
+    style Python_App fill:#fff,stroke:#999
+    style Domain_Market fill:#e3f2fd,stroke:#42a5f5
+    style Domain_Structure fill:#e8f5e9,stroke:#66bb6a
+    style Domain_Strategy fill:#fff3e0,stroke:#ffa726
+    style Domain_Execution fill:#fce4ec,stroke:#ef5350
+    style Domain_Research fill:#f3e5f5,stroke:#ab47bc
+    style Domain_Observe fill:#e0f2f1,stroke:#26a69a
+    style N8N_Simple fill:#f5f5f5,stroke:#bbb
+    style Supabase fill:#e8e8f4,stroke:#66a
+    style Lovable_App fill:#e8f4f4,stroke:#6aa

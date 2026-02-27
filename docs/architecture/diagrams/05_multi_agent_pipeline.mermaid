@@ -1,0 +1,96 @@
+---
+title: "Fractal AI — Multi-Agent Pipeline (Strategy Implementation)"
+---
+flowchart TB
+    START(["💡 New Strategy Idea\nor Research Finding"])
+
+    subgraph RA["🔬 Research Analyst"]
+        RA1["Register hypothesis\nwith prediction +\ninvalidation criteria"]
+        RA2["Generate adversarial\nquestions"]
+        RA3["Log to research_hypotheses\n+ research_questions"]
+    end
+
+    subgraph DA["📐 Data Architect"]
+        DA1["Check data availability\nand quality"]
+        DA2["Design required queries"]
+        DA3["Identify schema changes\nif needed"]
+    end
+
+    subgraph QA_R["📊 Quantitative Analyst"]
+        QA1["Execute analysis\nqueries"]
+        QA2["Record findings\n(SUPPORTING /\nCONTRADICTING /\nNEUTRAL)"]
+        QA3["Mark validation type\nhonestly (IN_SAMPLE\nvs OUT_OF_SAMPLE)"]
+    end
+
+    subgraph DVL["😈 Devil's Advocate"]
+        DVL1["Challenge findings:\nSmall sample? Outliers?\nRegime dependent?"]
+        DVL2["Test edge cases\nand failure modes"]
+        DVL3["Run adversarial\nqueries"]
+    end
+
+    subgraph SYN["🧩 Synthesis"]
+        SYN1["Combine findings\ninto conclusions"]
+        SYN2["Formulate trading\nrules with confidence"]
+        SYN3["Create strategy config\n(JSON)"]
+    end
+
+    subgraph DEV["👨‍💻 Developer"]
+        DEV1["Write tests FIRST\n(TDD)"]
+        DEV2["Implement filters\nand scoring"]
+        DEV3["Run test suite"]
+    end
+
+    subgraph QA_T["🧪 QA Tester"]
+        QA_T1["Run full regression\nsuite"]
+        QA_T2["Test edge cases:\nweekend gaps,\nno data, etc."]
+        QA_T3["Backtest comparison\nvs known results"]
+    end
+
+    subgraph SEC["🛡 Risk / Security"]
+        SEC1["Worst case scenario:\nmax drawdown?"]
+        SEC2["Position sizing\nvalidation"]
+        SEC3["Portfolio impact\nassessment"]
+    end
+
+    DEPLOY(["🚀 Deploy\nMerge to main\nN8N picks up new config"])
+
+    START --> RA
+    RA --> H1{{"✋ Robin\nApproves"}}
+    H1 --> DA
+    DA --> H2{{"✋ Robin\nApproves"}}
+    H2 --> QA_R
+    QA_R --> H3{{"✋ Robin\nReviews Findings"}}
+    H3 --> DVL
+    DVL --> H4{{"✋ Robin\nEvaluates"}}
+    H4 --> SYN
+    SYN --> H5{{"✋ Robin\nApproves Rules"}}
+    H5 --> DEV
+    DEV --> H6{{"✋ Robin\nReviews Code"}}
+    H6 --> QA_T
+    QA_T --> H7{{"✋ Robin\nApproves"}}
+    H7 --> SEC
+    SEC --> H8{{"✋ Robin\nFinal Sign-off"}}
+    H8 --> DEPLOY
+
+    %% Rejection paths
+    H3 -.->|"Findings weak\nor contradicting"| RA
+    H4 -.->|"Hypothesis\ninvalidated"| STOP(["🛑 Shelve\nLog as REJECTED"])
+
+    style RA fill:#f3e5f5,stroke:#ab47bc
+    style DA fill:#e3f2fd,stroke:#42a5f5
+    style QA_R fill:#e8f5e9,stroke:#66bb6a
+    style DVL fill:#fff3e0,stroke:#ffa726
+    style SYN fill:#fce4ec,stroke:#ef5350
+    style DEV fill:#e0f2f1,stroke:#26a69a
+    style QA_T fill:#f1f8e9,stroke:#8bc34a
+    style SEC fill:#fbe9e7,stroke:#ff5722
+    style H1 fill:#fff9c4,stroke:#f9a825
+    style H2 fill:#fff9c4,stroke:#f9a825
+    style H3 fill:#fff9c4,stroke:#f9a825
+    style H4 fill:#fff9c4,stroke:#f9a825
+    style H5 fill:#fff9c4,stroke:#f9a825
+    style H6 fill:#fff9c4,stroke:#f9a825
+    style H7 fill:#fff9c4,stroke:#f9a825
+    style H8 fill:#fff9c4,stroke:#f9a825
+    style DEPLOY fill:#c8e6c9,stroke:#2e7d32
+    style STOP fill:#ffcdd2,stroke:#c62828

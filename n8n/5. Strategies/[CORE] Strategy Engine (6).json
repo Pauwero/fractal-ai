@@ -1,0 +1,937 @@
+{
+  "name": "[CORE] Strategy Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "3/5 4-20 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2992,
+        496
+      ],
+      "id": "7e0dfd68-5511-4bde-9b52-f38ff67b645c",
+      "name": "⏰ Every 5min (Mon-Fri)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  { json: { pair: 'EURUSD' } },\n  { json: { pair: 'GBPUSD' } }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2768,
+        496
+      ],
+      "id": "b9fa33b9-2847-4a91-8c0c-30d6f7bf0b2e",
+      "name": "Get Pairs"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/unified_strategy_engine",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_pair: $json.pair }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2560,
+        496
+      ],
+      "id": "3c594561-d5a6-4cd6-a715-b28002cb4502",
+      "name": "🔄 Strategy Engine",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process ALL items from Strategy Engine (one per pair)\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const raw = item.json;\n  const data = Array.isArray(raw) ? raw[0] : raw;\n  \n  // Carry the pair from the upstream Get Pairs node if missing\n  if (!data.pair || data.pair.includes('$json') || data.pair.includes('{{')) {\n    // Try to get pair from the matching Get Pairs item\n    try {\n      const pairItem = $('Get Pairs').item;\n      if (pairItem) data.pair = pairItem.json.pair;\n    } catch(e) {\n      // Fallback: infer from item index\n      const pairs = ['EURUSD', 'GBPUSD'];\n      const idx = items.indexOf(item);\n      data.pair = pairs[idx] || 'EURUSD';\n    }\n  }\n  \n  results.push({ json: data });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2336,
+        496
+      ],
+      "id": "823f351b-acfb-4307-8169-6c06273c45b4",
+      "name": "📋 Parse Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "forming",
+              "leftValue": "={{ $json.has_forming }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2096,
+        112
+      ],
+      "id": "0e98bb13-f3b7-4d5c-9e8c-b7bef44b936b",
+      "name": "IF Forming?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process ALL items (one per pair that has forming)\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  const pair = data.pair || 'UNKNOWN';\n  const f = data.forming_alerts[0];\n  if (!f) continue;\n  \n  const dir = f.potential_direction;\n  const emoji = f.tier === '2m' ? '🚨' : f.tier === '5m' ? '🔥' : '⏳';\n  const dirEmoji = f.sweep_direction === 'HIGH' ? '📉' : '📈';\n\n  const title = f.tier === '2m'\n    ? `${emoji} ${pair} C2 Closing! | ${dirEmoji} ${f.sweep_direction} swept | ${f.minutes_to_close}m`\n    : `${emoji} ${pair} C2 Forming | ${dirEmoji} ${f.sweep_direction} swept | ${f.minutes_to_close}m`;\n\n  let desc = `Price ${Number(f.current_price).toFixed(5)}`;\n  if (f.tier === '5m' || f.tier === '2m') {\n    desc += ` | Prepare ${dir}`;\n  }\n\n  const strats = data.strategies;\n  const ftlr = strats.ftlr?.state !== 'IDLE' ? '✓' : '—';\n  const cisd = strats.cisd?.state !== 'IDLE' ? '✓' : '—';\n  const scalp = strats.scalp?.state !== 'IDLE' ? '✓' : '👀';\n  desc += `\\nFTLR ${ftlr} | CISD ${cisd} | SCALP ${scalp}`;\n\n  if (f.chart_link) {\n    desc += `\\n📊 [Open Chart](${f.chart_link})`;\n  }\n\n  results.push({ json: {\n    pair: pair,\n    forming_alert: f,\n    strategies: strats,\n    content: '',\n    embeds: [{\n      title: title,\n      description: desc,\n      color: f.tier === '2m' ? 15548997 : f.tier === '5m' ? 16750848 : 16776960,\n      timestamp: new Date().toISOString()\n    }]\n  }});\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        32
+      ],
+      "id": "f4e7aee6-edca-477d-8005-572332b49db2",
+      "name": "📝 Format Forming"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1473943292138885223/EC0PWck2fK58qeo8SHWigvwKF8jco_qjGL_k-XYZKdSdf0h59R4u0Gh0-gR1Ld7jIP17",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content, embeds: $json.embeds }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1632,
+        32
+      ],
+      "id": "b5eb27bb-356d-4525-bd9b-f2fe940ae554",
+      "name": "💬 Discord #strategy-signals"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "signals",
+              "leftValue": "={{ $json.has_signals }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2096,
+        336
+      ],
+      "id": "f073ce63-26ba-4dd8-874f-17ec7633747d",
+      "name": "IF Signals?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process ALL items (one per pair that has signals)\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  const pair = data.pair || 'EURUSD';\n\n  for (const sig of data.trade_signals) {\n    results.push({\n      json: {\n        p_strategy_id: sig.strategy_id,\n        p_pair: pair,\n        p_direction: sig.direction,\n        p_entry_price: sig.entry_price,\n        p_stop_price: sig.stop_price,\n        p_score: sig.score || null,\n        p_score_tier: sig.score_tier || null,\n        pair: pair,\n        signal: sig\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        272
+      ],
+      "id": "dff13aea-a40d-45f1-9030-121c375ec583",
+      "name": "📋 Prep Trade Signals"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/open_trade_from_signal",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=={{ JSON.stringify({ p_signal: $json.signal }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1632,
+        272
+      ],
+      "id": "da223940-51fc-4665-8620-95669da10a66",
+      "name": "📈 Open Trade",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst sigItems = $('📋 Prep Trade Signals').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const trade = items[i].json;\n  const t = Array.isArray(trade) ? trade[0] : trade;\n  const sigData = sigItems[i] ? sigItems[i].json : sigItems[0].json;\n  const sig = sigData.signal;\n  const pair = sigData.pair || 'EURUSD';\n  const dir = sig.direction;\n  const dirEmoji = dir === 'LONG' ? '📈' : '📉';\n\n  results.push({ json: {\n    pair: pair,\n    signal: sig,\n    trade: t,\n    content: '<@891045460922466354>',\n    embeds: [{\n      title: `${dirEmoji} ${dir} ${pair} | ${sig.strategy_id} ${sig.score_tier || ''}`.trim(),\n      description: `Entry ${Number(sig.entry_price).toFixed(5)} | Stop ${Number(sig.stop_price).toFixed(5)} | TP ${Number(t.out_target_price || sig.target_price).toFixed(5)}\\nRisk ${Number(t.out_risk_pips || sig.risk_pips).toFixed(1)}p | ${Number(t.out_risk_pct || 1).toFixed(2)}% | ${Number(t.out_position_size_lots || 0).toFixed(2)} lots | Score ${sig.score || '—'}`,\n      color: dir === 'LONG' ? 3066993 : 15158332,\n      footer: { text: sig.strategy_id },\n      timestamp: new Date().toISOString()\n    }]\n  }});\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        272
+      ],
+      "id": "c494ec62-3533-4dad-8500-0c9abd5846d7",
+      "name": "📝 Format Trade Open"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452254844445261889/fltb_HDGvRA3GA8xA3jB6y05vJzcEvzIabyEJR5HJaWkK_PrjSHv6xg3RHLbFfDbarCw",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content, embeds: $json.embeds }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1152,
+        272
+      ],
+      "id": "49454f68-8097-465a-9a64-0effa2e9082f",
+      "name": "💬 Discord #trade-updates (open)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "closures",
+              "leftValue": "={{ $json.has_closures }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2096,
+        576
+      ],
+      "id": "26fea415-fbe4-4131-ae1b-4979fe4bc2be",
+      "name": "IF Closures?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process ALL items (one per pair that has closures)\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  const pair = data.pair || 'EURUSD';\n  const closures = data.trade_closures;\n\n  for (const c of (Array.isArray(closures) ? closures : [])) {\n    const t = c;\n    const isWin = (t.result_r || 0) > 0;\n    const emoji = isWin ? '✅' : '❌';\n    const label = isWin ? 'WIN' : 'LOSS';\n    const rStr = (t.result_r > 0 ? '+' : '') + Number(t.result_r || 0).toFixed(1) + 'R';\n    const pipsStr = (t.result_pips > 0 ? '+' : '') + Number(t.result_pips || 0).toFixed(1) + 'p';\n    const amtStr = (t.result_amount > 0 ? '+$' : '-$') + Math.abs(t.result_amount || 0).toFixed(2);\n    \n    let durStr = '';\n    if (t.entry_time && t.exit_time) {\n      const mins = Math.round((new Date(t.exit_time) - new Date(t.entry_time)) / 60000);\n      if (mins >= 60) {\n        durStr = Math.floor(mins/60) + 'h ' + (mins%60) + 'm';\n      } else {\n        durStr = mins + 'm';\n      }\n    }\n\n    results.push({ json: {\n      pair: pair,\n      closure: t,\n      content: '<@891045460922466354>',\n      embeds: [{\n        title: `${emoji} ${label} ${rStr} | ${t.trade_strategy || t.strategy_id} ${t.trade_direction || ''} ${pair}`,\n        description: `${pipsStr} | ${amtStr} | ${durStr}\\nBalance $${Number(t.new_balance || 0).toFixed(2)}`,\n        color: isWin ? 3066993 : 15158332,\n        footer: { text: t.action || t.exit_reason || '' },\n        timestamp: new Date().toISOString()\n      }]\n    }});\n  }\n}\n\nreturn results.length > 0 ? results : [{ json: { skip: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        512
+      ],
+      "id": "4f7e960b-6434-4818-8229-84a85782c514",
+      "name": "📝 Format Close Alert"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452254844445261889/fltb_HDGvRA3GA8xA3jB6y05vJzcEvzIabyEJR5HJaWkK_PrjSHv6xg3RHLbFfDbarCw",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content, embeds: $json.embeds }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1632,
+        512
+      ],
+      "id": "25ba2002-126c-41d6-a2e8-feadc5ba23c7",
+      "name": "💬 Discord #trade-updates (close)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "counters",
+              "leftValue": "={{ $json.has_counters }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2096,
+        816
+      ],
+      "id": "871eae61-d77c-4331-b496-0d78c933931d",
+      "name": "IF Counters?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process ALL items (one per pair that has counters)\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  const pair = data.pair || 'EURUSD';\n  const c = data.counter_alerts[0];\n  if (!c) continue;\n\n  results.push({ json: {\n    pair: pair,\n    counter_alert: c,\n    content: '<@891045460922466354>',\n    embeds: [{\n      title: `⚠️ COUNTER | Trade ${c.trade_direction} ${pair}`,\n      description: `Opposite ${c.counter_direction} breach detected\\nCurrent P/L: ${Number(c.current_pnl_r || 0).toFixed(1)}R\\n📊 [Open Chart](https://www.tradingview.com/chart/?symbol=FX:${pair}&interval=5)`,\n      color: 16776960,\n      footer: { text: 'CISD Counter-Signal' },\n      timestamp: new Date().toISOString()\n    }]\n  }});\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        752
+      ],
+      "id": "e32f9d93-c1e5-4023-b9fd-76579dfd46ea",
+      "name": "📝 Format Counter"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1473943292138885223/EC0PWck2fK58qeo8SHWigvwKF8jco_qjGL_k-XYZKdSdf0h59R4u0Gh0-gR1Ld7jIP17",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content, embeds: $json.embeds }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1632,
+        752
+      ],
+      "id": "c720ec63-36c0-48d8-b15b-46f4dab91f0f",
+      "name": "💬 Discord #strategy-signals (counter)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log Forming Alert to discord_alert_log\nconst data = $input.first().json;\nconst pair = data.pair || 'EURUSD';\nconst f = data.forming_alert;\n\nreturn [{ json: {\n  p_pair: pair,\n  p_strategy_id: 'ALL',\n  p_alert_type: 'FORMING',\n  p_channel: 'strategy-signals',\n  p_title: `C2 Forming ${f ? f.sweep_direction : ''} - ${f ? f.tier : ''}`.trim(),\n  p_content: f || {},\n  p_discord_sent: true\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        -80
+      ],
+      "id": "09c0b834-3e58-456c-83e7-b23115b115b9",
+      "name": "📋 Prep Log Forming"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/log_discord_alert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1152,
+        -80
+      ],
+      "id": "3220bd3b-aef3-46da-910e-8b8e3313c03a",
+      "name": "Log Forming Alert",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log Signal/Trade Open to discord_alert_log\nconst data = $input.first().json;\nconst pair = data.pair || 'EURUSD';\nconst sig = data.signal;\n\nreturn [{ json: {\n  p_pair: pair,\n  p_strategy_id: sig ? sig.strategy_id : 'UNKNOWN',\n  p_alert_type: 'TRADE_OPEN',\n  p_channel: 'trade-updates',\n  p_title: `${sig ? sig.strategy_id : ''} ${sig ? sig.direction : ''} ${pair} signal`.trim(),\n  p_content: sig || {},\n  p_discord_sent: true\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        176
+      ],
+      "id": "5133eb2e-c1c1-4cf8-8f15-b0bad3dcddb9",
+      "name": "📋 Prep Log Signal"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/log_discord_alert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -672,
+        176
+      ],
+      "id": "ad55e642-509d-427d-bfef-a1a34d162b64",
+      "name": "Log Signal Alert",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log Trade Close to discord_alert_log\nconst data = $input.first().json;\nconst pair = data.pair || 'EURUSD';\nconst c = data.closure;\n\nreturn [{ json: {\n  p_pair: pair,\n  p_strategy_id: c ? (c.trade_strategy || c.strategy_id || 'UNKNOWN') : 'UNKNOWN',\n  p_alert_type: 'TRADE_CLOSE',\n  p_channel: 'trade-updates',\n  p_title: `${c ? (c.trade_strategy || c.strategy_id) : ''} ${c ? (c.action || c.exit_reason) : ''} ${pair}`.trim(),\n  p_content: c || {},\n  p_discord_sent: true\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        624
+      ],
+      "id": "318d8c1d-ffdf-4044-a278-a87818581e54",
+      "name": "📋 Prep Log Close"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/log_discord_alert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1152,
+        624
+      ],
+      "id": "7e51626c-fb82-4974-94b3-2d45469551b8",
+      "name": "Log Close Alert",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log Counter-CISD to discord_alert_log\nconst data = $input.first().json;\nconst pair = data.pair || 'EURUSD';\nconst c = data.counter_alert;\n\nreturn [{ json: {\n  p_pair: pair,\n  p_strategy_id: 'CISD-v3',\n  p_alert_type: 'COUNTER_CISD',\n  p_channel: 'strategy-signals',\n  p_title: `Counter-CISD ${c ? c.counter_direction : ''} ${pair}`.trim(),\n  p_content: c || {},\n  p_discord_sent: true\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        864
+      ],
+      "id": "b317294a-90ab-4613-8ea6-d2635f3d3a85",
+      "name": "📋 Prep Log Counter"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/log_discord_alert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1152,
+        864
+      ],
+      "id": "d3acde19-c22e-48ba-b6ff-3a5f3d8ee8a0",
+      "name": "Log Counter Alert",
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "⏰ Every 5min (Mon-Fri)": {
+      "main": [
+        [
+          {
+            "node": "Get Pairs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pairs": {
+      "main": [
+        [
+          {
+            "node": "🔄 Strategy Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Strategy Engine": {
+      "main": [
+        [
+          {
+            "node": "📋 Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Parse Response": {
+      "main": [
+        [
+          {
+            "node": "IF Forming?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Signals?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Closures?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Counters?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Forming?": {
+      "main": [
+        [
+          {
+            "node": "📝 Format Forming",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Format Forming": {
+      "main": [
+        [
+          {
+            "node": "💬 Discord #strategy-signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Discord #strategy-signals": {
+      "main": [
+        [
+          {
+            "node": "📋 Prep Log Forming",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Prep Log Forming": {
+      "main": [
+        [
+          {
+            "node": "Log Forming Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Signals?": {
+      "main": [
+        [
+          {
+            "node": "📋 Prep Trade Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Prep Trade Signals": {
+      "main": [
+        [
+          {
+            "node": "📈 Open Trade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📈 Open Trade": {
+      "main": [
+        [
+          {
+            "node": "📝 Format Trade Open",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Format Trade Open": {
+      "main": [
+        [
+          {
+            "node": "💬 Discord #trade-updates (open)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Discord #trade-updates (open)": {
+      "main": [
+        [
+          {
+            "node": "📋 Prep Log Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Prep Log Signal": {
+      "main": [
+        [
+          {
+            "node": "Log Signal Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Closures?": {
+      "main": [
+        [
+          {
+            "node": "📝 Format Close Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Format Close Alert": {
+      "main": [
+        [
+          {
+            "node": "💬 Discord #trade-updates (close)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Discord #trade-updates (close)": {
+      "main": [
+        [
+          {
+            "node": "📋 Prep Log Close",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Prep Log Close": {
+      "main": [
+        [
+          {
+            "node": "Log Close Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Counters?": {
+      "main": [
+        [
+          {
+            "node": "📝 Format Counter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Format Counter": {
+      "main": [
+        [
+          {
+            "node": "💬 Discord #strategy-signals (counter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Discord #strategy-signals (counter)": {
+      "main": [
+        [
+          {
+            "node": "📋 Prep Log Counter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Prep Log Counter": {
+      "main": [
+        [
+          {
+            "node": "Log Counter Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "ZXiIfbwA3d00Lai2XTM8G"
+  },
+  "versionId": "8a2c1360-f76d-4b86-aef9-dcdaaff26d38",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "Rz1elwxj2lk1WF2cl8Ew5",
+  "tags": []
+}

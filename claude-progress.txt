@@ -1,0 +1,15 @@
+# Claude Progress Log
+# Format: [DATE] [SESSION_TYPE] Summary | Next Steps
+
+[2026-02-27] [MIGRATION] Phase M0: Created project skeleton.
+  - Full directory structure per blueprint section 6.1
+  - CLAUDE.md written with project context
+  - pyproject.toml with all dependencies (core, dev, research)
+  - Docker Compose (API + PostgreSQL)
+  - GitHub Actions (test.yml + lint.yml)
+  - .env.example with all environment variables
+  - GLOSSARY.md committed
+  - Basic FastAPI health endpoint
+  - First passing test suite (test_setup.py)
+  | NEXT: Robin reviews structure, initializes Git repo, pushes to GitHub.
+  | THEN: Phase M1 — Swing detection (reference module)

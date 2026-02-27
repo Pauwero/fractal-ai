@@ -1,0 +1,19 @@
+{
+    "_comment": "Pair-specific parameters. Adding a new pair = adding a new entry here.",
+    "pairs": {
+        "EURUSD": {
+            "pip_value": 0.0001,
+            "pip_digits": 4,
+            "typical_spread_pips": 0.5,
+            "twelvedata_symbol": "EUR/USD",
+            "active": true
+        },
+        "GBPUSD": {
+            "pip_value": 0.0001,
+            "pip_digits": 4,
+            "typical_spread_pips": 0.7,
+            "twelvedata_symbol": "GBP/USD",
+            "active": false
+        }
+    }
+}

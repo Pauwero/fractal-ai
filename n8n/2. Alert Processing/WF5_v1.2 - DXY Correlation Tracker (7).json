@@ -1,0 +1,1037 @@
+{
+  "name": "WF5_v1.2 - DXY Correlation Tracker",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dxy-alert",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "3fc2d8dc-bece-41bf-bb07-9b10913942d3",
+      "name": "1a. DXY Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        112
+      ],
+      "webhookId": "dxy-alert-wf5"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dxy-confirmation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "53586f16-5b4b-4edc-858e-78e588bfa10b",
+      "name": "1b. Confirmation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        640
+      ],
+      "webhookId": "dxy-confirmation-wf5"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF5 MANUAL TEST: DXY ALERT\n// Version: 1.2.0\n// ============================================\n\nconst TEST_SCENARIOS = {\n  'dxy_bullish_5m1h': {\n    message: '5m-1H DXY: Bullish Candle 2',\n    description: 'DXY bullish = expect EUR/GBP bearish'\n  },\n  'dxy_bearish_15m4h': {\n    message: '15m-4H DXY: Bearish Candle 2',\n    description: 'DXY bearish (HIGH tier) = expect EUR/GBP bullish'\n  },\n  'dxy_bullish_1m15m': {\n    message: '1m-15m DXY: Bullish Candle 2',\n    description: 'DXY 1m-15m (LOW tier) = LOG ONLY'\n  }\n};\n\nconst ACTIVE_SCENARIO = 'dxy_bearish_15m4h';\nconst scenario = TEST_SCENARIOS[ACTIVE_SCENARIO];\n\nconsole.log(`\\n🧪 TEST: ${ACTIVE_SCENARIO}`);\nconsole.log(`📝 ${scenario.message}`);\nconsole.log(`📋 ${scenario.description}\\n`);\n\nreturn [{ json: { body: { message: scenario.message }, _test_mode: true, _test_scenario: ACTIVE_SCENARIO } }];"
+      },
+      "id": "cb23e8d3-b6db-4cc4-a4a1-f5ecd95e7d0d",
+      "name": "1c. Test DXY Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        304
+      ],
+      "notes": "Test DXY alert processing"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF5 MANUAL TEST: CONFIRMATION\n// Version: 1.2.0\n//\n// Use AFTER running DXY alert test\n// ============================================\n\nconst TEST_SCENARIOS = {\n  'gbp_confirms_first': {\n    correlation_id: 1,  // UPDATE with actual ID from DXY test\n    confirming_pair: 'GBPUSD',\n    confirming_alert_id: 100,\n    confirming_direction: 'BEARISH',\n    description: 'GBP confirms DXY inverse first'\n  },\n  'eur_confirms_first': {\n    correlation_id: 10,  // UPDATE with actual ID from DXY test\n    confirming_pair: 'EURUSD',\n    confirming_alert_id: 103,\n    confirming_direction: 'BEARISH',\n    description: 'EUR confirms DXY inverse first'\n  },\n  'eur_confirms_second': {\n    correlation_id: 1,  // UPDATE with actual ID\n    confirming_pair: 'EURUSD',\n    confirming_alert_id: 101,\n    confirming_direction: 'BEARISH',\n    description: 'EUR confirms after GBP (calculates lead time)'\n  },\n  'gbp_confirms_second': {\n    correlation_id: 10,  // UPDATE with actual ID\n    confirming_pair: 'GBPUSD',\n    confirming_alert_id: 101,\n    confirming_direction: 'BEARISH',\n    description: 'GBP confirms after EUR (calculates lead time)'\n  }\n};\n\nconst ACTIVE_SCENARIO = 'gbp_confirms_first';\nconst scenario = TEST_SCENARIOS[ACTIVE_SCENARIO];\n\nconsole.log(`\\n🧪 TEST: ${ACTIVE_SCENARIO}`);\nconsole.log(`📋 ${scenario.description}\\n`);\n\nreturn [{ json: { body: { ...scenario }, _test_mode: true } }];"
+      },
+      "id": "80f691e8-da0a-4abf-a63a-6e28e8548666",
+      "name": "1d. Test Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        832
+      ],
+      "notes": "Test confirmation from WF4"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF5 STEP 2: Parse DXY Alert\n// Version: 1.2.2 - Early potential filtering\n// ============================================\n\nconst input = $input.first().json;\nconst received_at = new Date().toISOString();\nconst is_test = input._test_mode || false;\n\n// Handle different body formats\nlet raw_message = '';\nif (typeof input.body === 'string') {\n  raw_message = input.body;\n} else if (typeof input.body === 'object' && input.body?.message) {\n  raw_message = input.body.message;\n} else if (input.message) {\n  raw_message = input.message;\n}\n\nfunction parseAlert(msg) {\n  if (!msg || typeof msg !== 'string') return { valid: false, error: 'Empty message' };\n  \n  const tfMatch = msg.match(/^(\\d+m-\\d+[mhH])/i);\n  if (!tfMatch) return { valid: false, error: 'No timeframe' };\n  const timeframe = tfMatch[1].toUpperCase();\n  \n  if (!/\\bDXY\\b/i.test(msg)) return { valid: false, error: 'Not DXY' };\n  \n  let direction = null;\n  if (/\\bBullish\\b/i.test(msg)) direction = 'BULLISH';\n  else if (/\\bBearish\\b/i.test(msg)) direction = 'BEARISH';\n  if (!direction) return { valid: false, error: 'No direction' };\n  \n  // Check for POTENTIAL status - this is key!\n  const is_potential = /\\bPotential\\b/i.test(msg);\n  const alert_status = is_potential ? 'POTENTIAL' : 'CONFIRMED';\n  \n  let alert_type = 'UNKNOWN';\n  const candleMatch = msg.match(/\\bCandle\\s*([234])\\b/i);\n  if (candleMatch) alert_type = `C${candleMatch[1]}`;\n  else if (/\\bCISD\\b/i.test(msg)) alert_type = 'CISD';\n  \n  // Reliability tier based on timeframe\n  let reliability_tier = 'LOW';\n  let is_structural = false;\n  const tf_upper = timeframe.toUpperCase();\n  if (tf_upper === '15M-4H') { reliability_tier = 'HIGH'; is_structural = true; }\n  else if (tf_upper === '5M-1H') { reliability_tier = 'MEDIUM'; is_structural = true; }\n  \n  // Inverse direction for EUR/GBP\n  const expected_eur_gbp = direction === 'BULLISH' ? 'BEARISH' : 'BULLISH';\n  \n  return {\n    valid: true,\n    timeframe,\n    direction,\n    alert_type,\n    alert_status,\n    is_potential,  // NEW: Flag for early filtering\n    reliability_tier,\n    is_structural,\n    expected_eur_direction: expected_eur_gbp,\n    expected_gbp_direction: expected_eur_gbp\n  };\n}\n\nconst parsed = parseAlert(raw_message);\n\nif (!parsed.valid) {\n  return [{ json: { status: 'ERROR', error: parsed.error, raw_message, is_test } }];\n}\n\n// Build alert record for potential alerts (direct DB storage)\nconst alertRecord = parsed.is_potential ? {\n  raw_message,\n  pair: 'DXY',\n  timeframe: parsed.timeframe,\n  alert_type: parsed.alert_type,\n  direction: parsed.direction,\n  alert_status: 'POTENTIAL',\n  received_at,\n  enriched: false,\n  is_test_data: is_test\n} : null;\n\nreturn [{ json: {\n  status: 'PARSED',\n  raw_message,\n  received_at,\n  pair: 'DXY',\n  ...parsed,\n  is_test,\n  trading_date: new Date().toISOString().split('T')[0],\n  alertRecord  // NEW: Pre-built record for potential alerts\n}}];\n"
+      },
+      "id": "117e64f3-2843-4608-bcb6-6248238e8a25",
+      "name": "2. Parse DXY",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "valid",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "PARSED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "structural",
+              "leftValue": "={{ $json.is_structural }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "9bd26a12-30a4-4eca-a1c0-38decd87c2c3",
+              "leftValue": "={{ $json.is_potential }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c69a39e4-4283-467b-93cc-664901e7bb8b",
+      "name": "3. Structural?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/fractal_alerts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates"
+            },
+            {
+              "name": "prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"raw_message\": \"{{ $json.raw_message }}\",\n  \"pair\": \"DXY\",\n  \"timeframe\": \"{{ $json.timeframe }}\",\n  \"alert_type\": \"{{ $json.alert_type }}\",\n  \"direction\": \"{{ $json.direction }}\",\n  \"alert_status\": \"CONFIRMED\",\n  \"received_at\": \"{{ $json.received_at }}\",\n  \"enriched\": true\n}",
+        "options": {}
+      },
+      "id": "74aee28a-7150-4130-8730-e7839ae847e6",
+      "name": "4. Insert DXY Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -880,
+        112
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/dxy_correlation_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "dxy_timeframe",
+              "value": "=eq.{{ $('2. Parse DXY').item.json.timeframe }}"
+            },
+            {
+              "name": "confirmation_status",
+              "value": "=eq.PENDING"
+            },
+            {
+              "name": "window_end",
+              "value": "=gte.{{ $now.toISO() }}"
+            },
+            {
+              "name": "order",
+              "value": "created_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "900fa7df-b648-47af-bcf3-274816778d8a",
+      "name": "5. Check Recent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -656,
+        112
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare correlation entry\nconst parsed = $('2. Parse DXY').first().json;\nconst dxy_alert = $('4. Insert DXY Alert').first().json;\nconst recent = $('5. Check Recent').first().json;\n\nconst dxy_id = Array.isArray(dxy_alert) ? dxy_alert[0]?.id : dxy_alert?.id;\nconst has_recent = Array.isArray(recent) && recent.length > 0;\n\nif (has_recent) {\n  return [{ json: { skip: true, reason: 'Recent correlation exists', existing_id: recent[0].id } }];\n}\n\n// Calculate window (60 min for 5m-1h, 120 min for 15m-4h)\nconst window_minutes = parsed.timeframe === '15m-4h' ? 120 : 60;\nconst window_end = new Date(Date.now() + window_minutes * 60000).toISOString();\n\nfunction getCurrentSession() {\n  const hour = new Date().getUTCHours();\n  if (hour >= 0 && hour < 7) return 'ASIA';\n  if (hour >= 7 && hour < 12) return 'LONDON';\n  if (hour >= 12 && hour < 17) return 'NY';\n  return 'DEAD';\n}\n\nreturn [{ json: {\n  skip: false,\n  dxy_alert_id: dxy_id,\n  dxy_timeframe: parsed.timeframe,\n  dxy_direction: parsed.direction,\n  expected_eur_direction: parsed.expected_eur_direction,\n  expected_gbp_direction: parsed.expected_gbp_direction,\n  reliability_tier: parsed.reliability_tier,\n  window_end,\n  is_test: parsed.is_test,\n  session: getCurrentSession()\n}}];"
+      },
+      "id": "48af40a6-85f8-436e-af12-7779523e120a",
+      "name": "6. Prepare Correlation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "no_skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "19a7a090-2bad-4caa-85dc-537e9725fcdd",
+      "name": "7. Create?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/dxy_correlation_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"dxy_alert_id\": \"{{ $json.dxy_alert_id }}\",\n  \"dxy_timeframe\": \"{{ $json.dxy_timeframe }}\",\n  \"dxy_direction\": \"{{ $json.dxy_direction }}\",\n  \"expected_eur_direction\": \"{{ $json.expected_eur_direction }}\",\n  \"expected_gbp_direction\": \"{{ $json.expected_gbp_direction }}\",\n  \"reliability_tier\": \"{{ $json.reliability_tier }}\",\n  \"window_end\": \"{{ $json.window_end }}\",\n  \"confirmation_status\": \"PENDING\",\n  \"eur_confirmed\": false,\n  \"gbp_confirmed\": false,\n\"session\": \"{{ $json.session }}\"\n}",
+        "options": {}
+      },
+      "id": "87dbb03e-404a-4650-a6b1-53c6954b8100",
+      "name": "8. Insert Correlation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF5: Format Discord - DXY Signal\n// Version: 1.6.5\n// ============================================\n\nconst parsed = $('2. Parse DXY').first().json;\nconst corrResponse = $('8. Insert Correlation').first().json;\n\nlet corr_id = null;\nif (Array.isArray(corrResponse) && corrResponse.length > 0) {\n  corr_id = corrResponse[0]?.id;\n} else if (corrResponse?.id) {\n  corr_id = corrResponse.id;\n}\n\nconst tier_emoji = { HIGH: '🔴', MEDIUM: '🟡', LOW: '⚪' };\nconst emoji = tier_emoji[parsed.reliability_tier] || '⚪';\nconst testTag = parsed.is_test ? ' [TEST]' : '';\nconst window = parsed.timeframe === '15m-4h' ? '120' : '60';\nconst timestamp = new Date().toLocaleDateString('en-GB') + ' ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });\n\nlet content = `${emoji} **DXY CORRELATION SIGNAL**${testTag}\\n\\n`;\n\ncontent += `**DXY Direction**\\t\\t**Timeframe**\\t\\t**Reliability**\\n`;\ncontent += `${parsed.direction}\\t\\t\\t\\t${parsed.timeframe?.toUpperCase()}\\t\\t\\t\\t${parsed.reliability_tier}\\n\\n`;\n\ncontent += `**Expected EUR/GBP**\\t**Window**\\t\\t\\t**Correlation ID**\\n`;\ncontent += `${parsed.expected_eur_direction}\\t\\t\\t\\t${window} min\\t\\t\\t\\t#${corr_id || 'Pending'}\\n\\n`;\n\ncontent += `⏳ _Waiting for EUR/GBP confirmation..._\\n\\n`;\n\ncontent += `_FractalEdge MVP • ${timestamp}_`;\n\nreturn [{ json: { content, correlation_id: corr_id } }];"
+      },
+      "id": "708db0ef-7fd2-4132-b734-3ae1070400b3",
+      "name": "9. Format Discord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.content }}",
+        "options": {}
+      },
+      "id": "2ae529d3-54e8-408b-af42-a6b3265d1ad8",
+      "name": "10. Send Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "webhookId": "72b5852c-8530-4d90-ab3e-68b9f9e5913e",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "fMlma8A9SiteuZyr",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"correlation_id\": {{ $('8. Insert Correlation').first().json[0]?.id || 'null' }},\n  \"reliability_tier\": \"{{ $('2. Parse DXY').item.json.reliability_tier }}\",\n  \"expected_direction\": \"{{ $('2. Parse DXY').item.json.expected_eur_direction }}\"\n}",
+        "options": {}
+      },
+      "id": "7995da42-ceb7-4038-b7cc-10bbcaa845bb",
+      "name": "11. Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"skipped\",\n  \"reason\": \"{{ $json.reason }}\",\n  \"existing_id\": {{ $json.existing_id || 'null' }}\n}",
+        "options": {}
+      },
+      "id": "88d4c546-6c97-4cba-8867-ff675fa4549e",
+      "name": "12. Respond Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF5: Parse Confirmation from WF4\n// Version: 1.3.2 - Fixed field mapping\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Map fields - WF4 sends full alert record, not custom format\nconst correlation_id = body.correlation_id || body.dxy_correlation_id;\nconst confirming_pair = body.confirming_pair || body.pair;\nconst confirming_direction = body.confirming_direction || body.direction;\nconst confirming_alert_id = body.confirming_alert_id || body.id;\nconst confirmed_at = body.confirmed_at || body.received_at || new Date().toISOString();\n\n// Validate required fields\nif (!correlation_id) {\n  return [{ json: { \n    skip: true, \n    error: 'No correlation_id or dxy_correlation_id provided'\n  }}];\n}\n\nif (!confirming_pair || !['EURUSD', 'GBPUSD'].includes(confirming_pair)) {\n  return [{ json: { \n    skip: true, \n    error: `Invalid confirming_pair: ${confirming_pair}`\n  }}];\n}\n\nif (!confirming_direction || !['BULLISH', 'BEARISH'].includes(confirming_direction)) {\n  return [{ json: { \n    skip: true, \n    error: `Invalid confirming_direction: ${confirming_direction}`\n  }}];\n}\n\nreturn [{ json: {\n  skip: false,\n  correlation_id,\n  confirming_pair,\n  confirming_alert_id,\n  confirming_direction,\n  confirmed_at,\n  is_test: body._test_mode || body.is_test || body.is_test_data || false\n}}];"
+      },
+      "id": "f9237f86-7dfb-4a6a-97bf-8ff799bd8d09",
+      "name": "14. Parse Confirm",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/dxy_correlation_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.correlation_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "cd98ccb8-79b9-4caa-bb1c-f20532380d62",
+      "name": "15. Get Correlation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1104,
+        736
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF5 STEP 16: Calculate Lead Time\n// Version: 1.4.0 - Added error handler support\n// ============================================\n\nconst confirm = $('14. Parse Confirm').first().json;\n\n// If parse had errors, pass through\nif (confirm.skip && confirm.error) {\n  return [{ json: { \n    ...confirm,\n    hasErrors: true,\n    errorSource: 'PARSE_CONFIRM'\n  }}];\n}\n\nconst corr_data = $('15. Get Correlation').first().json;\n\n// Check for Supabase error in fetch response\nif (corr_data?.code || corr_data?.message?.includes('error')) {\n  return [{ json: { \n    error: `Database error: ${corr_data.message || 'Unknown'}`,\n    hasErrors: true,\n    errorSource: 'GET_CORRELATION',\n    skip: true,\n    correlation_id: confirm.correlation_id \n  }}];\n}\n\nconst corr = Array.isArray(corr_data) ? corr_data[0] : corr_data;\n\n// Validation: Correlation exists\nif (!corr || !corr.id) {\n  return [{ json: { \n    error: 'Correlation not found', \n    hasErrors: true,\n    errorSource: 'CORRELATION_LOOKUP',\n    skip: true,\n    correlation_id: confirm.correlation_id \n  }}];\n}\n\n// Validation: Correlation not expired\nif (new Date(corr.window_end) < new Date()) {\n  return [{ json: { \n    error: 'Correlation expired', \n    hasErrors: false,  // Not an error, just expired - don't notify\n    skip: true,\n    correlation_id: corr.id,\n    window_end: corr.window_end,\n    current_time: new Date().toISOString()\n  }}];\n}\n\nconst is_eur = confirm.confirming_pair === 'EURUSD';\nconst is_gbp = confirm.confirming_pair === 'GBPUSD';\n\n// Validation: Direction must match expected inverse\nconst expected_direction = is_eur ? corr.expected_eur_direction : corr.expected_gbp_direction;\n\nif (confirm.confirming_direction !== expected_direction) {\n  return [{ json: { \n    error: 'Direction mismatch - confirmation rejected',\n    hasErrors: false,  // Not an error, just wrong direction - don't notify\n    skip: true,\n    correlation_id: corr.id,\n    confirming_pair: confirm.confirming_pair,\n    expected_direction: expected_direction,\n    received_direction: confirm.confirming_direction,\n    dxy_direction: corr.dxy_direction,\n    message: `DXY ${corr.dxy_direction} expects ${confirm.confirming_pair} ${expected_direction}, but received ${confirm.confirming_direction}`\n  }}];\n}\n\n// Initialize from existing correlation state\nlet new_status = corr.confirmation_status;\nlet first_to_confirm = corr.first_to_confirm;\nlet eur_gbp_lead_minutes = corr.eur_gbp_lead_minutes;\nlet eur_confirmed = corr.eur_confirmed;\nlet gbp_confirmed = corr.gbp_confirmed;\nlet eur_confirmed_at = corr.eur_confirmed_at;\nlet gbp_confirmed_at = corr.gbp_confirmed_at;\nlet eur_alert_id = corr.eur_alert_id;\nlet gbp_alert_id = corr.gbp_alert_id;\n\nconst confirmed_at = confirm.confirmed_at;\n\n// Process EUR confirmation\nif (is_eur && !eur_confirmed) {\n  eur_confirmed = true;\n  eur_confirmed_at = confirmed_at;\n  eur_alert_id = confirm.confirming_alert_id;\n  \n  if (!gbp_confirmed) {\n    first_to_confirm = 'EUR';\n    new_status = 'EUR_CONFIRMED';\n  } else {\n    new_status = 'BOTH_CONFIRMED';\n    eur_gbp_lead_minutes = Math.round((new Date(confirmed_at) - new Date(gbp_confirmed_at)) / 60000);\n  }\n}\n\n// Process GBP confirmation\nif (is_gbp && !gbp_confirmed) {\n  gbp_confirmed = true;\n  gbp_confirmed_at = confirmed_at;\n  gbp_alert_id = confirm.confirming_alert_id;\n  \n  if (!eur_confirmed) {\n    first_to_confirm = 'GBP';\n    new_status = 'GBP_CONFIRMED';\n  } else {\n    new_status = 'BOTH_CONFIRMED';\n    eur_gbp_lead_minutes = Math.round((new Date(eur_confirmed_at) - new Date(confirmed_at)) / 60000);\n  }\n}\n\nconst changed = new_status !== corr.confirmation_status;\n\nreturn [{ json: {\n  skip: !changed,\n  hasErrors: false,\n  correlation_id: corr.id,\n  new_status,\n  first_to_confirm,\n  eur_gbp_lead_minutes,\n  eur_confirmed,\n  gbp_confirmed,\n  eur_confirmed_at,\n  gbp_confirmed_at,\n  eur_alert_id,\n  gbp_alert_id,\n  dxy_timeframe: corr.dxy_timeframe,\n  dxy_direction: corr.dxy_direction,\n  reliability_tier: corr.reliability_tier,\n  confirming_pair: confirm.confirming_pair,\n  confirming_direction: confirm.confirming_direction,\n  expected_direction,\n  is_test: confirm.is_test\n}}];"
+      },
+      "id": "0b18c23d-94ff-4534-9792-d8048ecb4db8",
+      "name": "16. Calc Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "changed",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "db57cdd5-b942-4b30-ba09-5d2106989e98",
+      "name": "17. Changed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/dxy_correlation_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.correlation_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"confirmation_status\": \"{{ $json.new_status }}\",\n  \"first_to_confirm\": {{ $json.first_to_confirm ? '\"' + $json.first_to_confirm + '\"' : 'null' }},\n  \"eur_gbp_lead_minutes\": {{ $json.eur_gbp_lead_minutes || 'null' }},\n  \"eur_confirmed\": {{ $json.eur_confirmed }},\n  \"gbp_confirmed\": {{ $json.gbp_confirmed }},\n  \"eur_confirmed_at\": {{ $json.eur_confirmed_at ? '\"' + $json.eur_confirmed_at + '\"' : 'null' }},\n  \"gbp_confirmed_at\": {{ $json.gbp_confirmed_at ? '\"' + $json.gbp_confirmed_at + '\"' : 'null' }},\n\"eur_alert_id\": {{ $json.eur_alert_id ? '\"' + $json.eur_alert_id + '\"' : 'null' }},\n\"gbp_alert_id\": {{ $json.gbp_alert_id ? '\"' + $json.gbp_alert_id + '\"' : 'null' }}\n}",
+        "options": {}
+      },
+      "id": "ccff0531-bed2-4b75-acd2-886cadc9c401",
+      "name": "18. Update Corr",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        672
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF5: Format Discord - Confirmation\n// Version: 1.6.5\n// ============================================\n\nconst data = $('16. Calc Lead').first().json;\n\nconst is_both = data.new_status === 'BOTH_CONFIRMED';\nconst testTag = data.is_test ? ' [TEST]' : '';\nconst timestamp = new Date().toLocaleDateString('en-GB') + ' ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });\n\nlet content = '';\n\nif (is_both) {\n  content += `✅✅ **DXY INVERSE FULLY CONFIRMED**${testTag}\\n\\n`;\n  content += `**Status**\\t\\t\\t\\t**Leader**\\t\\t\\t**Lead Time**\\n`;\n  content += `${data.new_status}\\t\\t${data.first_to_confirm}\\t\\t\\t\\t${Math.abs(data.eur_gbp_lead_minutes)} min\\n\\n`;\n} else {\n  const pair = data.confirming_pair;\n  const expected = data.dxy_direction === 'BULLISH' ? 'BEARISH' : 'BULLISH';\n  content += `✅ **${pair} CONFIRMS DXY INVERSE**${testTag}\\n\\n`;\n  content += `**Confirming Pair**\\t**Direction**\\t\\t**Status**\\n`;\n  content += `${pair}\\t\\t\\t\\t${expected}\\t\\t\\t${data.new_status}\\n\\n`;\n}\n\ncontent += `**DXY Timeframe**\\t**DXY Direction**\\t**Reliability**\\n`;\ncontent += `${data.dxy_timeframe?.toUpperCase() || 'N/A'}\\t\\t\\t\\t${data.dxy_direction || 'N/A'}\\t\\t\\t${data.reliability_tier || 'N/A'}\\n\\n`;\n\ncontent += `_Correlation #${data.correlation_id || 'N/A'} • ${timestamp}_`;\n\nreturn [{ json: { content } }];"
+      },
+      "id": "0eedfcac-2f3b-47d5-8bf1-f438c3d4c2ed",
+      "name": "19. Format Discord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.content }}",
+        "options": {}
+      },
+      "id": "4ab4a2dd-38c0-4316-82ce-850ec41e035d",
+      "name": "20. Send Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        208,
+        672
+      ],
+      "webhookId": "a266a276-90d0-4eb5-9d21-77d08e0a905c",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "fMlma8A9SiteuZyr",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"confirmed\",\n  \"new_status\": \"{{ $('16. Calc Lead').item.json.new_status }}\",\n  \"first_to_confirm\": {{ $('16. Calc Lead').item.json.first_to_confirm ? '\"' + $('16. Calc Lead').item.json.first_to_confirm + '\"' : 'null' }},\n  \"lead_minutes\": {{ $('16. Calc Lead').item.json.eur_gbp_lead_minutes || 'null' }}\n}",
+        "options": {}
+      },
+      "id": "69ef52e4-f43a-4f1b-8d0d-c10993914d4a",
+      "name": "21. Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        432,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"no_change\",\n  \"correlation_id\": {{ $json.correlation_id || 'null' }}\n}",
+        "options": {}
+      },
+      "id": "2612d733-4011-4eb9-967a-fc668e163ae6",
+      "name": "22. No Change",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -240,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4: Prepare Research Alert (1M-15M only)\n// Version: 1.7.0\n// ============================================\n\nconst data = $input.first().json;\n\nconst alertRecord = {\n  raw_message: data.raw_message,\n  pair: data.pair,\n  timeframe: data.timeframe,\n  direction: data.direction || null,\n  alert_type: data.alert_type,\n  alert_status: data.alert_status,\n  smt_pair: data.smt_pair || null,\n  is_cisd_event: data.is_cisd_event || false,\n  is_potential_cisd: data.is_potential_cisd || false,\n  received_at: data.received_at,\n  session: data.current_session,\n  alert_significance: 'RESEARCH',\n  grade_score: 0,\n  core_factors: '',\n  supporting_factors: '',\n  is_tradeable_signal: false,\n  enriched: false\n};\n\nreturn [{ json: { alertRecord, ...data } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        352
+      ],
+      "id": "9f0651c9-65b1-483f-ad6f-25dd9a5dbeee",
+      "name": "3c. Prepare Research"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/fractal_alerts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates"
+            },
+            {
+              "name": "prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.alertRecord) }}",
+        "options": {}
+      },
+      "id": "5a6ce63b-812e-44f7-ab47-3232412c6234",
+      "name": "7. Insert Research Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -672,
+        352
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7d9d10aa-b21c-4c32-873d-154154c3bbb1",
+              "leftValue": "={{ $json.hasErrors }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -672,
+        736
+      ],
+      "id": "c3a6f4c2-e651-4519-894c-59cca71daf62",
+      "name": "16b. Has Errors?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://pauwero.app.n8n.cloud/webhook/error-handler",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"workflow_name\": \"WF5_DXY_CORRELATION\",\n  \"log_level\": \"ERROR\",\n  \"message\": \"{{ $json.error }}\",\n  \"node_name\": \"{{ $json.errorSource }}\",\n  \"context\": {\n    \"correlation_id\": \"{{ $json.correlation_id }}\",\n    \"confirming_pair\": \"{{ $json.confirming_pair || 'N/A' }}\"\n  }\n}\n",
+        "options": {}
+      },
+      "id": "48d8102d-c25a-4bcb-9acc-69a8abff2aaf",
+      "name": "🔔 Call Error Handler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -672,
+        944
+      ],
+      "notes": "Only triggered on error path"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -464,
+        944
+      ],
+      "id": "ecff8dde-1aa4-46e7-adda-da2e544d2640",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "1a. DXY Alert Webhook": {
+      "main": [
+        [
+          {
+            "node": "2. Parse DXY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1b. Confirmation Webhook": {
+      "main": [
+        [
+          {
+            "node": "14. Parse Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1c. Test DXY Alert": {
+      "main": [
+        [
+          {
+            "node": "2. Parse DXY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1d. Test Confirmation": {
+      "main": [
+        [
+          {
+            "node": "14. Parse Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Parse DXY": {
+      "main": [
+        [
+          {
+            "node": "3. Structural?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Structural?": {
+      "main": [
+        [
+          {
+            "node": "4. Insert DXY Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "3c. Prepare Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Insert DXY Alert": {
+      "main": [
+        [
+          {
+            "node": "5. Check Recent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Check Recent": {
+      "main": [
+        [
+          {
+            "node": "6. Prepare Correlation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Prepare Correlation": {
+      "main": [
+        [
+          {
+            "node": "7. Create?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. Create?": {
+      "main": [
+        [
+          {
+            "node": "8. Insert Correlation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "12. Respond Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8. Insert Correlation": {
+      "main": [
+        [
+          {
+            "node": "9. Format Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9. Format Discord": {
+      "main": [
+        [
+          {
+            "node": "10. Send Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10. Send Discord": {
+      "main": [
+        [
+          {
+            "node": "11. Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "14. Parse Confirm": {
+      "main": [
+        [
+          {
+            "node": "15. Get Correlation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "15. Get Correlation": {
+      "main": [
+        [
+          {
+            "node": "16. Calc Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16. Calc Lead": {
+      "main": [
+        [
+          {
+            "node": "16b. Has Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "17. Changed?": {
+      "main": [
+        [
+          {
+            "node": "18. Update Corr",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "22. No Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "18. Update Corr": {
+      "main": [
+        [
+          {
+            "node": "19. Format Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "19. Format Discord": {
+      "main": [
+        [
+          {
+            "node": "20. Send Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "20. Send Discord": {
+      "main": [
+        [
+          {
+            "node": "21. Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3c. Prepare Research": {
+      "main": [
+        [
+          {
+            "node": "7. Insert Research Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16b. Has Errors?": {
+      "main": [
+        [
+          {
+            "node": "🔔 Call Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "17. Changed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔔 Call Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "ZXiIfbwA3d00Lai2XTM8G"
+  },
+  "versionId": "0ee88135-4118-46d2-8cf2-3e511eee92cf",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "1Akv2PrUVxQil1ZSqdAjz",
+  "tags": [
+    {
+      "updatedAt": "2026-02-02T13:37:59.388Z",
+      "createdAt": "2026-02-02T13:37:59.388Z",
+      "id": "QffumRq8FXGfznP4",
+      "name": "FA1880"
+    },
+    {
+      "updatedAt": "2026-02-02T13:43:49.460Z",
+      "createdAt": "2026-02-02T13:43:49.460Z",
+      "id": "JqJ6cvJkU8LfhsF5",
+      "name": "DXY"
+    },
+    {
+      "updatedAt": "2026-02-02T13:43:49.470Z",
+      "createdAt": "2026-02-02T13:43:49.470Z",
+      "id": "dlc0xIvUYfcZ9pLS",
+      "name": "Correlation"
+    }
+  ]
+}

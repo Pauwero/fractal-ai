@@ -1,0 +1,74 @@
+---
+title: "Fractal AI — Current State Architecture"
+---
+graph TB
+    subgraph External["External Services"]
+        TD["TwelveData API\n(Market Data)"]
+        TV["TradingView\n(Manual Charting)"]
+        DC["Discord\n(Alerts)"]
+    end
+
+    subgraph Hetzner["Hetzner VPS (€7.50/mo) — Docker"]
+        subgraph N8N["N8N Automation"]
+            WF1["WF1: Data Pipeline\n⏱ Every 5M\nFetch candles → Detect swings\n→ Sync market state"]
+            WF2["WF2: Strategy Engine\n⏱ Every 5M (04-20 UTC)\nFTLR + CISD + SCALP signals\nTrade opens + closures"]
+            WF3["WF3: Health Check\n⏱ Every 2H\nData freshness + integrity"]
+            ERR["Error Handler\nDiscord alerts on failure"]
+        end
+    end
+
+    subgraph Supabase_Prod["Supabase: Fractal AI (Production)\n36 MB / 500 MB"]
+        direction TB
+        OHLC_P["ohlc_data\n5M + 1H candles"]
+        SW_P["detected_swings"]
+        LV_P["key_levels"]
+        TR_P["trades + alerts"]
+        
+        subgraph SQL_Funcs["~40 SQL Functions\n(Business Logic IN Database)"]
+            F1["detect_swings()"]
+            F2["ftlr_monitor_check()"]
+            F3["cisd_check_signal()"]
+            F4["trade_monitor_check()"]
+            F5["unified_strategy_engine()"]
+            F6["system_health_check()"]
+        end
+    end
+
+    subgraph Supabase_Res["Supabase: The Beacon Robin (Research)\n364 MB / 500 MB"]
+        OHLC_R["ohlc_data\n(Full 2025 dataset)"]
+        RES["research_*\n(Hypotheses, Findings,\nRules, Validations)"]
+        BB["Building Blocks\n(10 validated)"]
+    end
+
+    subgraph Claude_AI["Claude.ai Project"]
+        CK["Project Knowledge\n(11 markdown files)"]
+        MEM["Memory\n(Session context)"]
+        MCP_P["MCP → Fractal AI DB"]
+        MCP_R["MCP → Beacon Robin DB"]
+    end
+
+    subgraph Lovable["Lovable (Web App)"]
+        CV["Chart Viewer\n(React + Supabase)"]
+    end
+
+    TD -->|"REST API\n8 credits/min"| WF1
+    WF1 -->|"INSERT candles"| OHLC_P
+    WF1 -->|"CALL detect_swings()"| SQL_Funcs
+    WF2 -->|"CALL unified_strategy_engine()"| SQL_Funcs
+    WF3 -->|"CALL system_health_check()"| SQL_Funcs
+    SQL_Funcs -->|"Webhook"| DC
+    ERR -->|"Error alerts"| DC
+
+    Claude_AI -.->|"MCP queries"| Supabase_Prod
+    Claude_AI -.->|"MCP queries"| Supabase_Res
+    CV -.->|"Read"| Supabase_Prod
+
+    TV -.->|"Manual\nvalidation"| Claude_AI
+
+    style External fill:#f0f0f0,stroke:#999
+    style Hetzner fill:#e8f4e8,stroke:#4a9
+    style Supabase_Prod fill:#e8e8f4,stroke:#66a
+    style Supabase_Res fill:#f4e8f4,stroke:#a6a
+    style Claude_AI fill:#f4f0e8,stroke:#a96
+    style Lovable fill:#e8f4f4,stroke:#6aa
+    style SQL_Funcs fill:#ffe8e8,stroke:#c66

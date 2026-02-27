@@ -1,0 +1,25 @@
+{
+    "_comment": "Trading session definitions. All times in UTC.",
+    "sessions": {
+        "ASIA": {
+            "start_utc": "00:00",
+            "end_utc": "08:00",
+            "description": "Asia session — level formation"
+        },
+        "LONDON": {
+            "start_utc": "08:00",
+            "end_utc": "16:00",
+            "description": "London session — primary trading"
+        },
+        "NY": {
+            "start_utc": "13:00",
+            "end_utc": "21:00",
+            "description": "New York session — overlap is best"
+        }
+    },
+    "trading_window": {
+        "start_utc": "08:00",
+        "end_utc": "16:00",
+        "description": "Primary FTLR valid trading window"
+    }
+}

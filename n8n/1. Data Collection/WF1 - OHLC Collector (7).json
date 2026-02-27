@@ -1,0 +1,1241 @@
+{
+  "name": "WF1 - OHLC Collector",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "0c6c2cc2-1e29-4ba5-b5a8-fde201f8ae4c",
+      "name": "Every 5min Mon-Fri",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        848
+      ],
+      "notes": "Cron: */5 * * * 1-5 (every 5 min, Mon-Fri only)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF1 - MARKET CHECK & TIMEFRAME LOGIC\n// ============================================\n// Checks if forex market is open and determines\n// which timeframes to fetch based on current time.\n// ============================================\n\nconst now = new Date();\nconst utcDay = now.getUTCDay();    // 0=Sunday, 6=Saturday\nconst utcHour = now.getUTCHours();\nconst utcMinute = now.getUTCMinutes();\n\n// ============================================\n// TESTING MODE - Set to false for production!\n// ============================================\nconst TESTING_MODE = false;\n\n// Forex market: Sunday 22:00 UTC to Friday 22:00 UTC\n// Schedule trigger already filters to Mon-Fri,\n// but we need to handle Friday close & Sunday open edge cases\nconst isFridayAfterClose = utcDay === 5 && utcHour >= 22;\nconst isSundayBeforeOpen = utcDay === 0 && utcHour < 22;\nconst isSaturday = utcDay === 6;\n\nconst marketClosed = isFridayAfterClose || isSundayBeforeOpen || isSaturday;\n\nif (marketClosed && !TESTING_MODE) {\n  // Return empty to stop workflow\n  return [];\n}\n\n// ============================================\n// TIMEFRAME LOGIC\n// ============================================\n// - 5M: Always fetch (every execution)\n// - 1H: Fetch at start of each hour (minute 0-4)\n// - Daily: Fetch at 00:00 UTC only (minute 0-4)\n// ============================================\n\nconst timeframes = ['5min']; // Always fetch 5M\n\n// Fetch 15M at 0, 15, 30, 45 minute marks\nif (utcMinute % 15 < 5) {\n  timeframes.push('15min');\n}\n\n// Fetch 1H at the start of each hour\nif (utcMinute < 5) {\n  timeframes.push('1h');\n}\n\n// Fetch Daily at 00:00 UTC (after NY close)\nif (utcHour === 0 && utcMinute < 5) {\n  timeframes.push('1day');\n}\n\n// ============================================\n// BUILD FETCH REQUESTS\n// ============================================\nconst pairs = ['EUR/USD', 'GBP/USD'];\nconst requests = [];\n\nfor (const pair of pairs) {\n  for (const timeframe of timeframes) {\n    requests.push({\n      pair: pair,\n      pairClean: pair.replace('/', ''),\n      timeframe: timeframe,\n      timeframeClean: \n        timeframe === '5min' ? '5M' : \n        timeframe === '15min' ? '15M' :\n        timeframe === '1h' ? '1H' : 'D',\n      outputsize: 10, // Get last 10 candles to cover gaps\n      fetchedAt: now.toISOString()\n    });\n  }\n}\n\n// Log what we're fetching\nconsole.log(`Fetching ${requests.length} requests: ${timeframes.join(', ')} for ${pairs.join(', ')}`);\n\nreturn requests.map(r => ({ json: r }));"
+      },
+      "id": "d778610f-08de-485a-be40-56c92304f0cf",
+      "name": "Market Check & Timeframes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF1 - TRANSFORM OHLC DATA\n// ============================================\n// Transforms TwelveData response to database format\n// ============================================\n\nconst items = $input.all();\nconst allCandles = [];\n\nfor (const item of items) {\n  const response = item.json;\n  \n  // Check for API errors\n  if (response.status === 'error' || !response.values) {\n    console.log(`Error or no data for request:`, response);\n    continue;\n  }\n  \n  const meta = response.meta;\n  const values = response.values;\n  \n  // Determine pair and timeframe from meta\n  const pair = meta.symbol.replace('/', '');\n  const interval = meta.interval;\n  const timeframeClean = interval === '5min' ? '5M' : \n                 interval === '15min' ? '15M' : \n                 interval === '1h' ? '1H' : 'D';\n  \n  // Helper function to determine session\n  function getSession(datetime) {\n    const hour = new Date(datetime + 'Z').getUTCHours();\n    if (hour >= 0 && hour < 7) return 'ASIA';\n    if (hour >= 7 && hour < 12) return 'LONDON';\n    if (hour >= 12 && hour < 17) return 'NY';\n    return 'OFF_HOURS';\n  }\n  \n  // Transform each candle\n  for (const candle of values) {\n    const open = parseFloat(candle.open);\n    const high = parseFloat(candle.high);\n    const low = parseFloat(candle.low);\n    const close = parseFloat(candle.close);\n    \n    // Calculate pip values (4 decimal pairs)\n    const pipMultiplier = 10000;\n    const rangePips = Math.round((high - low) * pipMultiplier * 10) / 10;\n    const bodyPips = Math.round(Math.abs(close - open) * pipMultiplier * 10) / 10;\n    const isBullish = close > open;\n    \n    // Parse datetime and create timestamps\n    const openTime = new Date(candle.datetime + 'Z');\n    \n    // Calculate close time based on timeframe\n    let closeTime;\n    if (interval === '5min') {\n      closeTime = new Date(openTime.getTime() + 5 * 60 * 1000);\n    } else if (interval === '1h') {\n      closeTime = new Date(openTime.getTime() + 60 * 60 * 1000);\n    } else if (interval === '15min') {\n  closeTime = new Date(openTime.getTime() + 15 * 60 * 1000);\n} else {\n      closeTime = new Date(openTime.getTime() + 24 * 60 * 60 * 1000);\n    }\n    \n    const tradingDate = candle.datetime.split(' ')[0];\n    \n    allCandles.push({\n      pair: pair,\n      timeframe: timeframeClean,\n      open_time: openTime.toISOString(),\n      close_time: closeTime.toISOString(),\n      open: open,\n      high: high,\n      low: low,\n      close: close,\n      range_pips: rangePips,\n      body_pips: bodyPips,\n      is_bullish: isBullish,\n      session: getSession(candle.datetime),\n      trading_date: tradingDate\n    });\n  }\n}\n\nconsole.log(`Transformed ${allCandles.length} candles`);\n\nif (allCandles.length === 0) {\n  return [];\n}\n\nreturn allCandles.map(c => ({ json: c }));"
+      },
+      "id": "d11284e1-dc59-4f9f-880b-d14651dccc9a",
+      "name": "Transform OHLC Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/ohlc_candles?",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "pair,timeframe,open_time"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($input.all().map(item => item.json)) }}",
+        "options": {}
+      },
+      "id": "edcc88ef-82d9-498e-abe1-b991128ed912",
+      "name": "Upsert to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1584,
+        1200
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8a662ee1-f866-4412-92c9-73a075d1ca60",
+              "leftValue": "={{ $('Check Response').item.json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2016,
+        1200
+      ],
+      "id": "5461dea2-2439-456a-9c75-779c709209ed",
+      "name": "If"
+    },
+    {
+      "parameters": {},
+      "id": "e3f4b06f-b26c-4cec-a048-b25947f6f8d7",
+      "name": "▶️ Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Manual Backfill Flow\nExecute this flow if you want to fill ohlc data from specific asset, timeframe and date range.\nUseful if workflow missed data that is needed for historical refference",
+        "height": 400,
+        "width": 2176,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        320
+      ],
+      "typeVersion": 1,
+      "id": "5f8d0fb9-4076-470f-94f3-b7df6d1df662",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if Supabase upsert was successful\nconst items = $input.all();\n\n// Check for error responses\nconst hasError = items.some(item => {\n  const json = item.json;\n  return json.code || json.error || json.message?.includes('error');\n});\n\nif (hasError) {\n  // Return error info for Discord alert\n  const errorItem = items.find(item => item.json.code || item.json.error);\n  return [{\n    json: {\n      success: false,\n      error: {\n        message: errorItem?.json?.message || errorItem?.json?.error || 'Unknown database error',\n        code: errorItem?.json?.code || 'UNKNOWN',\n        node: 'Upsert to Supabase'\n      }\n    }\n  }];\n}\n\n// Success - pass through original items\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n    success: true\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        1200
+      ],
+      "id": "4da29e17-89fb-45fc-a35c-511eca4fa103",
+      "name": "Check Response"
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "={{ $json.pair }}"
+            },
+            {
+              "name": "interval",
+              "value": "={{ $json.timeframe }}"
+            },
+            {
+              "name": "outputsize",
+              "value": "={{ $json.outputsize }}"
+            },
+            {
+              "name": "apikey",
+              "value": "d9d8976ee9a54997a9b32b5afffa9be0"
+            },
+            {
+              "name": "timezone",
+              "value": "UTC"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 8000
+            }
+          }
+        }
+      },
+      "id": "4c099b3e-1ea1-4ef6-8d87-58769a8c0d21",
+      "name": "Fetch OHLC from TwelveData",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1808,
+        848
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Batching: 1 request per 8 seconds to respect rate limits (8/min)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/detected_swings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "pair,timeframe,swing_time,swing_type"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($input.all().map(item => item.json)) }}",
+        "options": {}
+      },
+      "id": "f60cbd3a-efcb-4f06-a518-33cd6d132edb",
+      "name": "Upsert Swings to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1584,
+        1536
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "DB triggers auto-detect C2/C3 closure patterns!"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if Supabase upsert was successful\nconst items = $input.all();\n\n// Check for error responses\nconst hasError = items.some(item => {\n  const json = item.json;\n  return json.code || json.error || json.message?.includes('error');\n});\n\nif (hasError) {\n  // Return error info for Discord alert\n  const errorItem = items.find(item => item.json.code || item.json.error);\n  return [{\n    json: {\n      success: false,\n      error: {\n        message: errorItem?.json?.message || errorItem?.json?.error || 'Unknown database error',\n        code: errorItem?.json?.code || 'UNKNOWN',\n        node: 'Upsert to Supabase'\n      }\n    }\n  }];\n}\n\n// Success - pass through original items\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n    success: true\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        1536
+      ],
+      "id": "3d360bcf-0d7e-4e39-b145-cb68b7546a0e",
+      "name": "Check Response2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255314492653588/M0iMq2_4AbtnxSEaBS9DJe92VFRINjEDWtMDNSKw0-m5D2cKAxV_IwpEdtU9yGAQIZRY  ",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"🔴 WF1 OHLC Collector Error - After Upsert Detected Swings\",\n    \"color\": 15548997,\n    \"fields\": [\n      {\n        \"name\": \"Error\",\n        \"value\": \"{{ $json.error?.message || 'Unknown error' }}\",\n        \"inline\": false\n      },\n      {\n        \"name\": \"Node\",\n        \"value\": \"{{ $json.error?.node || 'Unknown' }}\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Timestamp\",\n        \"value\": \"{{ new Date().toISOString() }}\",\n        \"inline\": true\n      }\n    ],\n    \"footer\": { \"text\": \"FractalEdge MVP v2.1\" }\n  }]\n}",
+        "options": {}
+      },
+      "id": "aae80374-b493-45cf-bcea-8ec78bc610ea",
+      "name": "Discord Error Alert2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2784,
+        1552
+      ],
+      "notes": "Only triggered on error path"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8a662ee1-f866-4412-92c9-73a075d1ca60",
+              "leftValue": "={{ $input.item.json.statusCode !== undefined ? !$input.item.json.error : true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2432,
+        1536
+      ],
+      "id": "fab18309-d28a-4d0d-84bc-31624732e366",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Batch candles for insert (500 per batch)\nconst data = $input.first().json;\n\nif (!data.success || !data.candles || data.candles.length === 0) {\n  console.log(`⚠️ Skipping ${data.timeframe}: ${data.error || 'No candles'}`);\n  return { json: { skip: true, timeframe: data.timeframe, reason: data.error || 'No candles' } };\n}\n\nconst batchSize = 500;\nconst batches = [];\n\nfor (let i = 0; i < data.candles.length; i += batchSize) {\n  batches.push({\n    timeframe: data.timeframe,\n    batchNum: Math.floor(i / batchSize) + 1,\n    totalBatches: Math.ceil(data.candles.length / batchSize),\n    count: Math.min(batchSize, data.candles.length - i),\n    candles: data.candles.slice(i, i + batchSize)\n  });\n}\n\nconsole.log(`📦 Created ${batches.length} batches for ${data.timeframe}`);\n\nreturn batches.map(b => ({ json: b }));"
+      },
+      "id": "001bf411-598b-474c-8c60-3704711d6131",
+      "name": "📦 Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-candles",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0bb036c4-c4d3-43b1-b520-9c3a248b6d53",
+      "name": "Has Candles?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log skipped timeframe\nconst data = $json;\nconsole.log(`⏭️ Skipped: ${data.timeframe} - ${data.reason}`);\nreturn { json: data };"
+      },
+      "id": "2c0dd17c-0d35-401f-be44-455faa72dd90",
+      "name": "⏭️ Log Skip",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BACKFILL CONFIGURATION\n// ============================================\n// Edit these values before running\n\nconst CONFIG = {\n  // Pair to backfill\n  pair: 'EUR/USD',\n  pairEnum: 'EURUSD',\n  \n  // Date range (YYYY-MM-DD format)\n  startDate: '2026-02-01',\n  endDate: '2026-02-16',\n  \n  // Timeframes to fetch from TwelveData\n  // Each will be a separate API call\n  timeframes: [\n   // { interval: '5min',  dbTimeframe: '5M',  outputsize: 5000 },\n    { interval: '1h', dbTimeframe: '1H' },\n    { interval: '15min',    dbTimeframe: '15M'},\n    { interval: '5min',    dbTimeframe: '5M'},\n   // { interval: '1day',  dbTimeframe: 'D',   outputsize: 50 },\n   // { interval: '1week', dbTimeframe: 'W',   outputsize: 10 }\n  ],\n  \n  // TwelveData API key\n  apiKey: 'd9d8976ee9a54997a9b32b5afffa9be0',\n  \n  // Mark all data as test data for easy cleanup\n  isTestData: true\n};\n\n// Log configuration\nconsole.log('=== BACKFILL CONFIGURATION ===');\nconsole.log(`Pair: ${CONFIG.pairEnum}`);\nconsole.log(`Date Range: ${CONFIG.startDate} to ${CONFIG.endDate}`);\nconsole.log(`Timeframes: ${CONFIG.timeframes.map(t => t.dbTimeframe).join(', ')}`);\nconsole.log('==============================');\n\nreturn { json: CONFIG };"
+      },
+      "id": "16779fec-46e5-464b-994d-517c0ff82799",
+      "name": "⚙️ Config1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate one request per timeframe\nconst config = $input.first().json;\n\nconst requests = config.timeframes.map(tf => ({\n  ...tf,\n  pair: config.pair,\n  pairEnum: config.pairEnum,\n  startDate: config.startDate,\n  endDate: config.endDate,\n  apiKey: config.apiKey,\n  isTestData: config.isTestData\n}));\n\nconsole.log(`Generated ${requests.length} API requests`);\n\nreturn requests.map(r => ({ json: r }));"
+      },
+      "id": "229d307c-51ed-4e27-84a7-a4b0d5e5bb62",
+      "name": "Split Timeframes1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.twelvedata.com/time_series?symbol={{ $json.pair }}&interval={{ $json.interval }}&start_date={{ $json.startDate }}&end_date={{ $json.endDate }}&outputsize={{ $json.outputsize }}&timezone=UTC&apikey={{ $json.apiKey }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "1a2055f6-c623-40c7-8d2b-afbf4c0b3716",
+      "name": "📡 Fetch TwelveData1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hdtpvlyofjevvoerculm.supabase.co/rest/v1/ohlc_candles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "pair,timeframe,open_time"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.candles) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f96cdee8-7c1b-4371-ba10-9938add9c39d",
+      "name": "💾 Store in Supabase1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2688,
+        384
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "exwl5NRRjTpEn0O5",
+          "name": "Fractal Research DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FINAL SUMMARY\n// ============================================\n\nconst results = $input.all();\n\nconsole.log('\\n========================================');\nconsole.log('✅ OHLC BACKFILL COMPLETE');\nconsole.log('========================================');\nconsole.log('\\nRun this SQL to verify:\\n');\nconsole.log(`SELECT timeframe, COUNT(*) as candles, MIN(open_time) as earliest, MAX(open_time) as latest`);\nconsole.log(`FROM ohlc_candles`);\nconsole.log(`WHERE pair = 'EURUSD' AND is_test_data = true`);\nconsole.log(`GROUP BY timeframe`);\nconsole.log(`ORDER BY timeframe;`);\n\nreturn {\n  json: {\n    status: 'complete',\n    message: 'OHLC backfill finished',\n    batchesProcessed: results.length\n  }\n};"
+      },
+      "id": "14cc67b6-c4e6-49db-bc3c-121d8b976a12",
+      "name": "📊 Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF1 - TRANSFORM OHLC DATA\n// ============================================\n// Transforms TwelveData response to database format\n// ============================================\nconst items = $input.all();\nconst allCandles = [];\nlet timeframeClean = 'D';\n\nfor (const item of items) {\n  const response = item.json;\n  \n  // Check for API errors\n  if (response.status === 'error' || !response.values) {\n    console.log('Error or no data for request:', response);\n    continue;\n  }\n  \n  const meta = response.meta;\n  const values = response.values;\n  \n  // Determine pair and timeframe from meta\n  const pair = meta.symbol.replace('/', '');\n  const interval = meta.interval;\n  timeframeClean = interval === '5min' ? '5M' : \n                 interval === '15min' ? '15M' :\n                 interval === '1h' ? '1H' : 'D';\n  \n  // Helper function to determine session\n  function getSession(datetime) {\n    const hour = new Date(datetime + 'Z').getUTCHours();\n    if (hour >= 0 && hour < 7) return 'ASIA';\n    if (hour >= 7 && hour < 12) return 'LONDON';\n    if (hour >= 12 && hour < 17) return 'NY';\n    return 'OFF_HOURS';\n  }\n  \n  // Transform each candle\n  for (const candle of values) {\n    const open = parseFloat(candle.open);\n    const high = parseFloat(candle.high);\n    const low = parseFloat(candle.low);\n    const close = parseFloat(candle.close);\n    \n    // Calculate pip values (4 decimal pairs)\n    const pipMultiplier = 10000;\n    const rangePips = Math.round((high - low) * pipMultiplier * 10) / 10;\n    const bodyPips = Math.round(Math.abs(close - open) * pipMultiplier * 10) / 10;\n    const isBullish = close > open;\n    \n    // Parse datetime and create timestamps\n    const openTime = new Date(candle.datetime + 'Z');\n    \n    // Calculate close time based on timeframe\n    let closeTime;\n    if (interval === '5min') {\n      closeTime = new Date(openTime.getTime() + 5 * 60 * 1000);\n    } else if (interval === '1h') {\n      closeTime = new Date(openTime.getTime() + 60 * 60 * 1000);\n    } else {\n      closeTime = new Date(openTime.getTime() + 24 * 60 * 60 * 1000);\n    }\n    \n    const tradingDate = candle.datetime.split(' ')[0];\n    \n    allCandles.push({\n  pair: pair,               // Must match research enum: 'EURUSD'\n  timeframe: timeframeClean,\n  open_time: openTime.toISOString(),\n  close_time: closeTime.toISOString(),\n  open_price: open,         // renamed\n  high_price: high,         // renamed\n  low_price: low,           // renamed\n  close_price: close,       // renamed\n  volume: 0,\n  source: 'twelvedata_backfill',\n  is_complete: true,\n  is_closed: true,\n  session: getSession(candle.datetime),\n});\n  }\n}\n\nconsole.log(`Transformed ${allCandles.length} candles`);\n\nreturn {\n  json: {\n    success: allCandles.length > 0,\n    candles: allCandles,\n    timeframe: timeframeClean,\n    error: null,\n    count: allCandles.length\n  }\n};"
+      },
+      "id": "dd2917a6-31cd-4616-9e7c-25091d715017",
+      "name": "🔄 Transform1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF1 v2.4 - DETECT SWINGS (1H + 5M)\n// ============================================\n// Fixed: Now detects BOTH HIGH and LOW when same candle qualifies\n// C2/C3 closure patterns calculated by database function\n// ============================================\n\nconst transformItems = $('Transform OHLC Data').all();\n\n// ============================================\n// CONFIGURATION\n// ============================================\nconst TIMEFRAMES_TO_DETECT = ['1H', '15M', '5M'];\n\n// Group candles by pair AND timeframe\nconst candlesByPairTF = {};\nfor (const item of transformItems) {\n  const candle = item.json;\n  \n  if (!TIMEFRAMES_TO_DETECT.includes(candle.timeframe)) continue;\n  \n  const key = candle.pair + '_' + candle.timeframe;\n  if (!candlesByPairTF[key]) candlesByPairTF[key] = [];\n  \n  candlesByPairTF[key].push({\n    pair: candle.pair,\n    timeframe: candle.timeframe,\n    open_time: candle.open_time,\n    open: parseFloat(candle.open),\n    high: parseFloat(candle.high),\n    low: parseFloat(candle.low),\n    close: parseFloat(candle.close),\n    range_pips: candle.range_pips\n  });\n}\n\n// Helper functions\nfunction getSession(openTime) {\n  const hour = new Date(openTime).getUTCHours();\n  if (hour >= 0 && hour < 7) return 'ASIA';\n  if (hour >= 7 && hour < 12) return 'LONDON';\n  if (hour >= 12 && hour < 17) return 'NY';\n  return 'OFF_HOURS';\n}\n\nfunction getTradingDate(openTime) {\n  return new Date(openTime).toISOString().split('T')[0];\n}\n\n// Helper to build swing object\nfunction buildSwingObject(pair, timeframe, swingType, swingPrice, c1, c2, c3) {\n  const expiryHours = timeframe === '1H' ? 48 : 4;\n  const expiresAt = new Date(\n    new Date(c2.open_time).getTime() + expiryHours * 60 * 60 * 1000\n  ).toISOString();\n  \n  return {\n    pair: pair,\n    timeframe: timeframe,\n    swing_type: swingType,\n    swing_time: c2.open_time,\n    swing_price: swingPrice,\n    \n    // C1 data\n    c1_candle_time: c1.open_time,\n    c1_open: c1.open,\n    c1_high: c1.high,\n    c1_low: c1.low,\n    c1_close: c1.close,\n    c1_body_high: Math.max(c1.open, c1.close),\n    c1_body_low: Math.min(c1.open, c1.close),\n    \n    // C2 data\n    c2_candle_time: c2.open_time,\n    c2_open: c2.open,\n    c2_high: c2.high,\n    c2_low: c2.low,\n    c2_close: c2.close,\n    c2_range_pips: c2.range_pips,\n    c2_midpoint: (c2.high + c2.low) / 2,\n    c2_body_high: Math.max(c2.open, c2.close),\n    c2_body_low: Math.min(c2.open, c2.close),\n    \n    // C3 data\n    c3_candle_time: c3.open_time,\n    c3_open: c3.open,\n    c3_high: c3.high,\n    c3_low: c3.low,\n    c3_close: c3.close,\n    c3_body_high: Math.max(c3.open, c3.close),\n    c3_body_low: Math.min(c3.open, c3.close),\n    \n    // Status\n    swept: false,\n    sweep_status: 'UNSWEPT',\n    expires_at: expiresAt,\n    expired: false,\n    session: getSession(c2.open_time),\n    trading_date: getTradingDate(c2.open_time)\n  };\n}\n\n// ============================================\n// DETECT SWINGS\n// ============================================\nconst detectedSwings = [];\n\nfor (const key of Object.keys(candlesByPairTF)) {\n  const candles = candlesByPairTF[key].sort((a, b) => \n    new Date(b.open_time) - new Date(a.open_time)\n  );\n  \n  if (candles.length < 5) {\n    console.log(key + ': Not enough candles (' + candles.length + ')');\n    continue;\n  }\n  \n  const pair = candles[0].pair;\n  const timeframe = candles[0].timeframe;\n  \n  console.log(key + ': Checking ' + candles.length + ' candles');\n  \n  for (let i = 2; i < candles.length - 2; i++) {\n    const c1 = candles[i + 1];  // C-1 (older)\n    const c2 = candles[i];      // C0 (swing candle)\n    const c3 = candles[i - 1];  // C+1 (newer)\n    \n    // SWING HIGH - check independently\n    if (c2.high > c1.high && c2.high > c3.high) {\n      console.log(pair + ' ' + timeframe + ': SWING HIGH at ' + c2.open_time);\n      detectedSwings.push(buildSwingObject(pair, timeframe, 'HIGH', c2.high, c1, c2, c3));\n    }\n    \n    // SWING LOW - check independently (NOT else-if!)\n    if (c2.low < c1.low && c2.low < c3.low) {\n      console.log(pair + ' ' + timeframe + ': SWING LOW at ' + c2.open_time);\n      detectedSwings.push(buildSwingObject(pair, timeframe, 'LOW', c2.low, c1, c2, c3));\n    }\n  }\n}\n\n// ============================================\n// SUMMARY\n// ============================================\nconst swing1H = detectedSwings.filter(s => s.timeframe === '1H').length;\nconst swing5M = detectedSwings.filter(s => s.timeframe === '5M').length;\n\nconsole.log('WF1 v2.4: Detected ' + detectedSwings.length + ' swings (1H: ' + swing1H + ', 5M: ' + swing5M + ')');\n\nif (detectedSwings.length === 0) return [];\n\nreturn detectedSwings.map(s => ({ json: s }));"
+      },
+      "id": "427e5a09-11d4-4443-9238-42400e2154fb",
+      "name": "Detect MTF Swings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        1536
+      ],
+      "notes": "Detects swings AND enriches with key level proximity"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE TWELVEDATA API RESPONSE\n// ============================================\n\nconst items = $input.all();\nconst errors = [];\nconst validItems = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Check for API error responses\n  if (data.code || data.status === 'error') {\n    errors.push({\n      type: 'API_ERROR',\n      message: data.message || 'Unknown API error',\n      code: data.code,\n      pair: data.symbol || 'unknown'\n    });\n    continue;\n  }\n  \n  // Check for rate limit errors\n  if (data.message && data.message.includes('API credits')) {\n    errors.push({\n      type: 'RATE_LIMIT',\n      message: data.message,\n      pair: data.symbol || 'unknown'\n    });\n    continue;\n  }\n  \n  // Check for empty values array\n  if (!data.values || !Array.isArray(data.values) || data.values.length === 0) {\n    errors.push({\n      type: 'NO_DATA',\n      message: 'No candle data returned',\n      pair: data.meta?.symbol || 'unknown'\n    });\n    continue;\n  }\n  \n  // Validate candle data structure\n  const firstCandle = data.values[0];\n  if (!firstCandle.open || !firstCandle.high || !firstCandle.low || !firstCandle.close) {\n    errors.push({\n      type: 'INVALID_DATA',\n      message: 'Candle missing OHLC fields',\n      pair: data.meta?.symbol || 'unknown'\n    });\n    continue;\n  }\n  \n  // Data is valid\n  validItems.push(item);\n}\n\n// If we have errors, output them for error handling\nif (errors.length > 0) {\n  console.log('❌ API Validation Errors:', JSON.stringify(errors, null, 2));\n  \n  // Return error info for the error branch\n  return [{\n    json: {\n      hasErrors: true,\n      errors: errors,\n      errorCount: errors.length,\n      validCount: validItems.length,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// All items valid - pass through\nconsole.log(`✅ Validated ${validItems.length} API responses`);\nreturn validItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        848
+      ],
+      "id": "a2ac3c5c-ba4b-4c16-bc68-ef932d4c3680",
+      "name": "✅ Validate API Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6249bde9-5196-4659-ab93-db52da6f7dd8",
+              "leftValue": "={{ $json.hasErrors }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2224,
+        848
+      ],
+      "id": "9210d21d-826c-4a96-84f2-e6bd3679370b",
+      "name": "Has API Errors?"
+    },
+    {
+      "parameters": {
+        "content": "## STORE CANDLE DATA \nSave candle data to database",
+        "height": 304,
+        "width": 1664
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        1120
+      ],
+      "typeVersion": 1,
+      "id": "374b4c98-b7b8-436c-a484-e793fd44b87d",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## DETECT SWINGS\nDetect swing points in the market\nand store them to the database",
+        "height": 304,
+        "width": 1664,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        1440
+      ],
+      "typeVersion": 1,
+      "id": "6e09956c-180e-4a35-99cd-f55e6e2b2f3e",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## FETCH CANDLE DATA\nLoad 5min candle data from Twelvedata API, \nevery 5mins",
+        "height": 320,
+        "width": 1664,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        784
+      ],
+      "typeVersion": 1,
+      "id": "2673a7fb-cf58-435a-953a-3a52b2ea98ea",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## FTLR STRATEGY MONITORING (OLD)\nDetect swing points in the market\nand store them to the database",
+        "height": 368,
+        "width": 2016,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        1760
+      ],
+      "typeVersion": 1,
+      "id": "850a7d5d-23ee-483a-8f86-304eddf92a71",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## ERROR HANDELING",
+        "height": 960,
+        "width": 336,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2672,
+        784
+      ],
+      "typeVersion": 1,
+      "id": "355e6a5b-23cd-46e3-ac56-cf7147d3063a",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discordapp.com/api/webhooks/1452255314492653588/M0iMq2_4AbtnxSEaBS9DJe92VFRINjEDWtMDNSKw0-m5D2cKAxV_IwpEdtU9yGAQIZRY  ",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"🔴 WF1 OHLC Collector Error - After Upsert OHLC candles\",\n    \"color\": 15548997,\n    \"fields\": [\n      {\n        \"name\": \"Error\",\n        \"value\": \"{{ $json.error?.message || 'Unknown error' }}\",\n        \"inline\": false\n      },\n      {\n        \"name\": \"Node\",\n        \"value\": \"{{ $json.error?.node || 'Unknown' }}\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Timestamp\",\n        \"value\": \"{{ new Date().toISOString() }}\",\n        \"inline\": true\n      }\n    ],\n    \"footer\": { \"text\": \"FractalEdge MVP v2.1\" }\n  }]\n}",
+        "options": {}
+      },
+      "id": "81044b12-dec8-43aa-8afd-d6b3b1510c5d",
+      "name": "Candle Storage Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2768,
+        1216
+      ],
+      "notes": "Only triggered on error path"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/ftlr_monitor_check",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"p_pair\": \"EURUSD\"\n}",
+        "options": {}
+      },
+      "id": "caa50adb-d8ab-40c3-9bdf-0bd88a6b7cb2",
+      "name": "FTLR Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1456,
+        1888
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "notes": "Quick check - returns should_alert boolean"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "should-alert-condition",
+              "leftValue": "={{ $json.should_alert }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "69d06df3-8262-4302-86c1-822c00cee35b",
+      "name": "IF Should Alert",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        1888
+      ],
+      "notes": "Only trigger WF2 if should_alert is true"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.pauwero.com/webhook/ftlr-alert",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "7f68b75f-faad-464b-a7ca-e312f79d052b",
+      "name": "Trigger FTLR Alert Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2224,
+        1776
+      ],
+      "notes": "Sends full monitor data to WF2. REPLACE: YOUR_WF2_WEBHOOK_URL"
+    },
+    {
+      "parameters": {},
+      "id": "9a3672fc-a0e0-41bb-9a32-f2fd9b8f4fdd",
+      "name": "No Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        1984
+      ],
+      "notes": "End - nothing to alert"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        1776
+      ],
+      "id": "8be510a7-93f0-4f61-a790-68b4bc9fff5e",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/rpc/ftlr_sync_market_state",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_pair: $json.pair }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2416,
+        1184
+      ],
+      "id": "037100ff-bfde-45b4-a643-892151c15190",
+      "name": "Sync Market State",
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Syncs key_levels sweep status based on price action"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  { json: { pair: 'EURUSD' } },\n  { json: { pair: 'GBPUSD' } }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        1184
+      ],
+      "id": "dd6a48e0-36c4-4d77-94b7-2e16277cc554",
+      "name": "Both Pairs"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 5min Mon-Fri": {
+      "main": [
+        [
+          {
+            "node": "Market Check & Timeframes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Market Check & Timeframes": {
+      "main": [
+        [
+          {
+            "node": "Fetch OHLC from TwelveData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform OHLC Data": {
+      "main": [
+        [
+          {
+            "node": "Upsert to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Check Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Detect MTF Swings",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Both Pairs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Candle Storage Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "▶️ Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Config1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Response": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch OHLC from TwelveData": {
+      "main": [
+        [
+          {
+            "node": "✅ Validate API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Swings to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Check Response2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Response2": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Discord Error Alert2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Batch": {
+      "main": [
+        [
+          {
+            "node": "Has Candles?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Candles?": {
+      "main": [
+        [
+          {
+            "node": "💾 Store in Supabase1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⏭️ Log Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏭️ Log Skip": {
+      "main": [
+        [
+          {
+            "node": "📊 Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Config1": {
+      "main": [
+        [
+          {
+            "node": "Split Timeframes1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Timeframes1": {
+      "main": [
+        [
+          {
+            "node": "📡 Fetch TwelveData1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📡 Fetch TwelveData1": {
+      "main": [
+        [
+          {
+            "node": "🔄 Transform1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Store in Supabase1": {
+      "main": [
+        [
+          {
+            "node": "📊 Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Transform1": {
+      "main": [
+        [
+          {
+            "node": "📦 Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect MTF Swings": {
+      "main": [
+        [
+          {
+            "node": "Upsert Swings to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Validate API Response": {
+      "main": [
+        [
+          {
+            "node": "Has API Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has API Errors?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Transform OHLC Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FTLR Check": {
+      "main": [
+        [
+          {
+            "node": "IF Should Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Should Alert": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Trigger FTLR Alert Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Market State": {
+      "main": [
+        []
+      ]
+    },
+    "Both Pairs": {
+      "main": [
+        [
+          {
+            "node": "Sync Market State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "ZXiIfbwA3d00Lai2XTM8G"
+  },
+  "versionId": "27320141-cfbf-4951-8799-3eef3e3fcfd8",
+  "meta": {
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "YE8JzxTqlJOKdg5iZNqRG",
+  "tags": [
+    {
+      "updatedAt": "2026-01-28T07:18:41.293Z",
+      "createdAt": "2026-01-28T07:18:41.293Z",
+      "id": "S5srMcCei5YiCKPg",
+      "name": "FTLR"
+    },
+    {
+      "updatedAt": "2026-01-28T07:18:41.307Z",
+      "createdAt": "2026-01-28T07:18:41.307Z",
+      "id": "EdBl1FH018hG0qXg",
+      "name": "Data Collection"
+    },
+    {
+      "updatedAt": "2026-01-28T07:18:41.306Z",
+      "createdAt": "2026-01-28T07:18:41.306Z",
+      "id": "OERzeC7KtwjbeH8q",
+      "name": "v2.2"
+    },
+    {
+      "updatedAt": "2026-01-28T07:18:41.313Z",
+      "createdAt": "2026-01-28T07:18:41.313Z",
+      "id": "R0NhpgnXQ7quCPA7",
+      "name": "Trading"
+    },
+    {
+      "updatedAt": "2026-01-28T07:18:41.314Z",
+      "createdAt": "2026-01-28T07:18:41.314Z",
+      "id": "WEG2U0BUNHGQv7rq",
+      "name": "Production"
+    },
+    {
+      "updatedAt": "2026-01-28T07:18:41.317Z",
+      "createdAt": "2026-01-28T07:18:41.317Z",
+      "id": "oWBggNT1ChfHFwJh",
+      "name": "v2.1"
+    },
+    {
+      "updatedAt": "2026-01-28T07:18:41.318Z",
+      "createdAt": "2026-01-28T07:18:41.318Z",
+      "id": "x3jvFI7QvIkXIezh",
+      "name": "Key Levels"
+    },
+    {
+      "updatedAt": "2026-01-28T07:18:41.326Z",
+      "createdAt": "2026-01-28T07:18:41.326Z",
+      "id": "LE1dpr5O6eUm7Uto",
+      "name": "Swing Detection"
+    }
+  ]
+}

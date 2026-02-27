@@ -1,0 +1,69 @@
+---
+title: "Fractal AI — Strategy Engine: Signal Evaluation Flow"
+---
+flowchart TB
+    EVENT["🔔 Domain Event Received\n(SwingDetected / CISDDetected / PatternFormed)"]
+
+    LOAD["Load Strategy Config\n(JSON file from Git)"]
+
+    subgraph Filters["Hard Filters (All Must Pass)"]
+        direction TB
+        F1{"Trading Window?\n08:00-16:00 UTC"}
+        F2{"Correct Pair?\nEURUSD / GBPUSD"}
+        F3{"Strategy-Specific\nFilter 1"}
+        F4{"Strategy-Specific\nFilter 2"}
+        F5{"Strategy-Specific\nFilter N"}
+        F1 -->|"✓"| F2
+        F2 -->|"✓"| F3
+        F3 -->|"✓"| F4
+        F4 -->|"✓"| F5
+    end
+
+    SCORE["Calculate Score (0-100)\nWeighted quality factors\nfrom strategy config"]
+
+    MIN{"Score ≥\nmin_score?"}
+
+    subgraph Tiers["Risk Tier Assignment"]
+        direction LR
+        T1["BASE\n40-54\n0.25% risk"]
+        T2["STANDARD\n55-64\n0.50% risk"]
+        T3["STRONG\n65-74\n0.75% risk"]
+        T4["PREMIUM\n75-100\n1.00% risk"]
+    end
+
+    SIGNAL["📡 SignalGenerated Event\nStrategy + Pair + Direction\nScore + Tier + Entry/SL/TP"]
+
+    REJECTED["❌ SignalRejected\n(Logged with reason)"]
+
+    EVENT --> LOAD
+    LOAD --> Filters
+
+    F1 -->|"✗"| REJECTED
+    F2 -->|"✗"| REJECTED
+    F3 -->|"✗"| REJECTED
+    F4 -->|"✗"| REJECTED
+    F5 -->|"✗"| REJECTED
+
+    F5 -->|"✓ All pass"| SCORE
+    SCORE --> MIN
+    MIN -->|"✗ Too low"| REJECTED
+    MIN -->|"✓"| Tiers
+    Tiers --> SIGNAL
+
+    subgraph Config_Example["Example: CISD v3 Config"]
+        direction TB
+        CE1["pairs: EURUSD"]
+        CE2["window: 04:00-19:00"]
+        CE3["filters:\n  series ≥ 2\n  c2_body_aligned\n  c3_confirms\n  body_risk 1-6 pips\n  no_counter_cisd"]
+        CE4["min_score: 40"]
+        CE5["target: 3R"]
+    end
+
+    Config_Example -.->|"Drives\nevaluation"| LOAD
+
+    style Filters fill:#fff3e0,stroke:#ffa726
+    style Tiers fill:#e8f5e9,stroke:#66bb6a
+    style SIGNAL fill:#c8e6c9,stroke:#2e7d32
+    style REJECTED fill:#ffcdd2,stroke:#c62828
+    style Config_Example fill:#e3f2fd,stroke:#42a5f5
+    style SCORE fill:#f3e5f5,stroke:#ab47bc

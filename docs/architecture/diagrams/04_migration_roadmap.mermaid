@@ -1,0 +1,49 @@
+---
+title: "Fractal AI — Migration Roadmap"
+---
+gantt
+    title Migration Phases (Est. 14 weeks)
+    dateFormat YYYY-MM-DD
+    axisFormat %b %d
+
+    section Phase M0
+    Foundation & Repo Setup           :m0, 2026-03-03, 1w
+    CLAUDE.md + pytest + GH Actions   :m0b, after m0, 0d
+
+    section Phase M1
+    Swing Detection (Reference Module) :m1, after m0, 2w
+    Fix Jan 23 bug + regression tests  :m1b, after m1, 0d
+
+    section Phase M2
+    Strategy Configs (JSON)            :m2, after m0, 1w
+    Domain Models (Pydantic)           :m2b, after m2, 1w
+
+    section Phase M3
+    Level Detection                    :m3a, after m1, 1w
+    Pattern Recognition                :m3b, after m3a, 1w
+    CISD Detection                     :m3c, after m3b, 1w
+    Integration Tests                  :m3d, after m3c, 3d
+
+    section Phase M4
+    Strategy Engine                    :crit, m4, after m3d, 2w
+    Backtest Comparison                :m4b, after m4, 3d
+
+    section Phase M5
+    FastAPI Endpoints                  :m5a, after m4b, 1w
+    N8N → FastAPI Migration            :m5b, after m5a, 1w
+    Parallel Testing (1 week min)      :crit, m5c, after m5b, 1w
+
+    section Phase M6
+    Trade Management                   :m6, after m4b, 2w
+
+    section Phase M7
+    Structured Logging + Health        :m7, after m5c, 1w
+
+    section Phase M8
+    Backtesting Engine                 :m8a, after m4b, 1w
+    Performance Analytics              :m8b, after m8a, 1w
+    Re-validation Script               :m8c, after m8b, 1w
+
+    section Phase M9
+    Cutover & Cleanup                  :milestone, m9, after m7, 1w
+    Rebuild from Git Test              :m9b, after m9, 2d

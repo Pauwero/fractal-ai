@@ -1,0 +1,81 @@
+---
+title: "Fractal AI — Compound Learning Loop"
+---
+flowchart TB
+    subgraph Live["Live Trading"]
+        TRADE["Trade Completes\n(WIN / LOSS / EXPIRED)"]
+    end
+
+    subgraph Autopsy["🔍 Trade Autopsy (Automated)"]
+        A1["Market Context\nSession, trend, volatility,\nday of week"]
+        A2["Signal Quality\nScore, tier, filters\npassed/failed"]
+        A3["Execution Quality\nEntry timing, time\nto target/stop"]
+        A4["Anomaly Tags\nUnexpected behavior\nor edge cases"]
+    end
+
+    subgraph Learning["📚 Learning Database"]
+        L1["Trade Autopsies\n(Every trade)"]
+        L2["Pattern Analysis\n(Monthly automated)"]
+    end
+
+    subgraph Insights["💡 Monthly Pattern Analysis"]
+        I1["'FTLR performs 15%\nworse in high-vol weeks'"]
+        I2["'CISD premium tier\nmaintains 85% WR'"]
+        I3["'London open signals\nmore reliable than NY'"]
+        I4["'Counter-CISD filter\nsaved 12 losses'"]
+    end
+
+    subgraph Validation["✅ Monthly Re-Validation"]
+        V1["Re-run stored queries\nagainst latest data"]
+        V2{"Deviation\n> 15%?"}
+        V3["⚠️ ALERT\nFinding may be\ndecaying"]
+        V4["✓ Still valid\nUpdate validation\ntable"]
+    end
+
+    subgraph Updates["🔧 Strategy Config Updates\n(Human Approved)"]
+        U1["Adjust risk tiers"]
+        U2["Add / modify filters"]
+        U3["Update trading windows"]
+        U4["Pause strategy in\nadverse conditions"]
+    end
+
+    subgraph Golden["📖 Golden Standard Updates"]
+        G1["CLAUDE.md updated\nwith new patterns"]
+        G2["Anti-patterns documented\n'Don't research X'"]
+        G3["Test fixtures updated\nwith new edge cases"]
+    end
+
+    subgraph Production["🎯 Improved Production"]
+        P1["Better signals"]
+        P2["Fewer false positives"]
+        P3["Adaptive risk sizing"]
+        P4["Self-improving system"]
+    end
+
+    TRADE --> Autopsy
+    Autopsy --> L1
+    L1 --> L2
+    L2 --> Insights
+
+    Insights --> Updates
+    Insights --> Golden
+
+    L1 --> Validation
+    V1 --> V2
+    V2 -->|"Yes"| V3
+    V2 -->|"No"| V4
+    V3 --> Updates
+
+    Updates -->|"✋ Robin\nApproves"| Production
+    Golden --> Production
+
+    Production -->|"Better trades\ngenerate better\nautopsies"| TRADE
+
+    style Live fill:#fce4ec,stroke:#ef5350
+    style Autopsy fill:#e3f2fd,stroke:#42a5f5
+    style Learning fill:#f3e5f5,stroke:#ab47bc
+    style Insights fill:#fff3e0,stroke:#ffa726
+    style Validation fill:#e8f5e9,stroke:#66bb6a
+    style Updates fill:#fff9c4,stroke:#f9a825
+    style Golden fill:#e0f2f1,stroke:#26a69a
+    style Production fill:#c8e6c9,stroke:#2e7d32

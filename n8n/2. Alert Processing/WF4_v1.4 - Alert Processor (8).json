@@ -1,0 +1,1321 @@
+{
+  "name": "WF4_v1.4 - Alert Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4 MANUAL TEST TRIGGER\n// Version: 1.4.0\n//\n// Configure test scenarios here\n// ============================================\n\nconst TEST_SCENARIOS = {\n  // Scenario 1: High probability C2 at key level\n  'c2_at_key_level': {\n    message: '5m-1H EURUSD: Bearish Candle 2',\n    description: 'C2 CISD at key level - should grade A+'\n  },\n  \n  // Scenario 2: Potential CISD (research only)\n  'potential_cisd': {\n    message: '1m-15m GBPUSD: Potential Bearish Candle 2',\n    description: 'Potential CISD - should be RESEARCH_ONLY'\n  },\n  \n  // Scenario 3: C3 confirmation\n  'c3_confirmation': {\n    message: '5m-1H EURUSD: Bearish Candle 3',\n    description: 'C3 after C2 - bonus points'\n  },\n  \n  // Scenario 4: SMT divergence\n  'smt_divergence': {\n    message: '15m-4H GBPUSD: SMT Divergence with FOREXCOM:EURUSD',\n    description: 'SMT between pairs'\n  },\n  \n  // Scenario 5: C4 continuation\n  'c4_continuation': {\n    message: '5m-1H EURUSD: Bullish Candle 4',\n    description: 'C4 continuation signal'\n  },\n  \n  // Scenario 6: Manipulation\n  'manipulation': {\n    message: '5m-1H GBPUSD: Manipulation Bearish',\n    description: 'Manipulation/liquidity grab'\n  }\n};\n\n// ============================================\n// SELECT TEST SCENARIO HERE\n// ============================================\nconst ACTIVE_SCENARIO = 'c2_at_key_level';\n\nconst scenario = TEST_SCENARIOS[ACTIVE_SCENARIO];\n\nconsole.log(`\\n🧪 TEST MODE: ${ACTIVE_SCENARIO}`);\nconsole.log(`📝 Message: ${scenario.message}`);\nconsole.log(`📋 Expected: ${scenario.description}\\n`);\n\nreturn [{\n  json: {\n    body: {\n      message: scenario.message\n    },\n    _test_mode: true,\n    _test_scenario: ACTIVE_SCENARIO,\n    _test_description: scenario.description\n  }\n}];"
+      },
+      "id": "f2ba9425-be4e-440d-b5be-20849896c8cc",
+      "name": "1b. Manual Test",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1168,
+        448
+      ],
+      "notes": "Click 'Execute Node' to test with configured scenario"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4 STEP 2: Parse & Validate Alert\n// Version: 1.7.1 - Early potential filtering\n// ============================================\n\nconst WORKFLOW_VERSION = '1.7.1';\nconst input = $input.first().json;\nconst received_at = new Date().toISOString();\nconst is_test_mode = input._test_mode || false;\n\n// Handle different body formats\nlet raw_message = '';\nif (typeof input.body === 'string') {\n  raw_message = input.body;\n} else if (typeof input.body === 'object' && input.body?.message) {\n  raw_message = input.body.message;\n} else if (input.message) {\n  raw_message = input.message;\n}\n\nfunction getCurrentSession() {\n  const hour = new Date().getUTCHours();\n  if (hour >= 0 && hour < 7) return 'ASIA';\n  if (hour >= 7 && hour < 12) return 'LONDON';\n  if (hour >= 12 && hour < 17) return 'NY';\n  return 'DEAD';\n}\n\nfunction parseAlert(message) {\n  if (!message || typeof message !== 'string') return { valid: false, error: 'Empty message' };\n  \n  const normalized = message.trim();\n  \n  const timeframePattern = /^(\\d+m-\\d+[mhH])/i;\n  const tfMatch = normalized.match(timeframePattern);\n  if (!tfMatch) return { valid: false, error: 'No timeframe found' };\n  const timeframe = tfMatch[1].toUpperCase();\n  \n  const pairPattern = /\\b(EURUSD|GBPUSD|DXY)\\b/i;\n  const pairMatch = normalized.match(pairPattern);\n  if (!pairMatch) return { valid: false, error: 'No valid pair found' };\n  const pair = pairMatch[1].toUpperCase();\n  \n  let smt_pair = null;\n  const smtPairPattern = /(?:with|vs\\.?)\\s+(?:FOREXCOM:)?(EURUSD|GBPUSD)/i;\n  const smtMatch = normalized.match(smtPairPattern);\n  if (smtMatch) smt_pair = smtMatch[1].toUpperCase();\n  \n  // Check for POTENTIAL status - this is key!\n  const is_potential = /\\bPotential\\b/i.test(normalized);\n  const status = is_potential ? 'POTENTIAL' : 'CONFIRMED';\n  \n  let direction = null;\n  if (/\\bBullish\\b/i.test(normalized)) direction = 'BULLISH';\n  else if (/\\bBearish\\b/i.test(normalized)) direction = 'BEARISH';\n  \n  let alert_type = null;\n  let candle_number = null;\n  \n  if (/\\bSMT\\b/i.test(normalized) || /\\bDivergence\\b/i.test(normalized)) {\n    alert_type = 'SMT';\n  } else if (/\\bCISD\\b/i.test(normalized)) {\n    alert_type = 'CISD';\n  } else if (/\\bManipulation\\b/i.test(normalized)) {\n    alert_type = 'MANIPULATION';\n  } else {\n    const candlePattern = /\\bCandle\\s*([234])\\b/i;\n    const candleMatch = normalized.match(candlePattern);\n    if (candleMatch) {\n      candle_number = parseInt(candleMatch[1]);\n      alert_type = `C${candle_number}`;\n    }\n  }\n  \n  if (!alert_type) return { valid: false, error: 'No valid alert type found' };\n  \n  const base_tf = timeframe.split('-')[0];\n  const base_tf_match = base_tf.match(/(\\d+)/);\n  const base_tf_minutes = base_tf_match ? parseInt(base_tf_match[1]) : 5;\n  \n  return {\n    valid: true,\n    timeframe,\n    base_tf,\n    base_tf_minutes,\n    pair,\n    direction,\n    alert_type,\n    candle_number,\n    status,\n    smt_pair,\n    is_potential,  // NEW: Flag for early filtering\n    is_cisd_event: alert_type === 'C2' || alert_type === 'CISD',\n    is_potential_cisd: is_potential && (alert_type === 'C2' || alert_type === 'CISD')\n  };\n}\n\nconst parsed = parseAlert(raw_message);\n\nif (!parsed.valid) {\n  return [{\n    json: {\n      status: 'ERROR',\n      error: parsed.error,\n      raw_message,\n      received_at,\n      workflow_version: WORKFLOW_VERSION,\n      is_test_mode\n    }\n  }];\n}\n\nconst current_session = getCurrentSession();\n\n// Build alert record for potential alerts (direct DB storage)\nconst alertRecord = parsed.is_potential ? {\n  raw_message,\n  pair: parsed.pair,\n  timeframe: parsed.timeframe,\n  alert_type: parsed.alert_type,\n  direction: parsed.direction,\n  alert_status: 'POTENTIAL',\n  smt_pair: parsed.smt_pair,\n  is_cisd_event: parsed.is_cisd_event,\n  is_potential_cisd: true,\n  received_at,\n  session: current_session,\n  alert_significance: 'RESEARCH',\n  grade_score: 0,\n  core_factors: '',\n  supporting_factors: '',\n  is_tradeable_signal: false,\n  enriched: false,\n  is_test_data: is_test_mode\n} : null;\n\nreturn [{\n  json: {\n    status: 'PARSED',\n    raw_message,\n    received_at,\n    pair: parsed.pair,\n    timeframe: parsed.timeframe,\n    base_tf: parsed.base_tf,\n    base_tf_minutes: parsed.base_tf_minutes,\n    alert_type: parsed.alert_type,\n    candle_number: parsed.candle_number,\n    direction: parsed.direction,\n    alert_status: parsed.status,\n    smt_pair: parsed.smt_pair,\n    is_cisd_event: parsed.is_cisd_event,\n    is_potential_cisd: parsed.is_potential_cisd,\n    is_potential: parsed.is_potential,  // NEW: For routing\n    current_session,\n    is_valid_session: ['ASIA', 'LONDON', 'NY'].includes(current_session),\n    is_tradeable_pair: ['EURUSD', 'GBPUSD'].includes(parsed.pair),\n    is_dxy: parsed.pair === 'DXY',\n    other_pair: parsed.pair === 'EURUSD' ? 'GBPUSD' : 'EURUSD',\n    workflow_version: WORKFLOW_VERSION,\n    trading_date: new Date().toISOString().split('T')[0],\n    is_test_mode,\n    alertRecord  // NEW: Pre-built record for potential alerts\n  }\n}];\n"
+      },
+      "id": "6632cb59-07a8-46ca-933a-b6c9ca9c95fd",
+      "name": "2. Parse Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "PARSED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "tradeable",
+              "leftValue": "={{ $json.is_tradeable_pair }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7dcba3f5-7c46-4169-978b-9dab8d9d467b",
+      "name": "3. Check Validity",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/ohlc_candles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pair",
+              "value": "=eq.{{ $json.pair }}"
+            },
+            {
+              "name": "timeframe",
+              "value": "=eq.{{ $json.base_tf_minutes }}M"
+            },
+            {
+              "name": "order",
+              "value": "open_time.desc"
+            },
+            {
+              "name": "limit",
+              "value": "25"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "id": "8c75e449-06d6-4b30-ba7c-2790d09cf29b",
+      "name": "4a. Fetch OHLC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "alwaysOutputData": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/daily_context",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pair",
+              "value": "=eq.{{ $json.pair }}"
+            },
+            {
+              "name": "date",
+              "value": "=eq.{{ $json.trading_date }}"
+            },
+            {
+              "name": "order",
+              "value": "updated_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "f37561d8-a4d5-4107-afed-c479d1b993ab",
+      "name": "4b. Fetch Daily",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        160
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/key_levels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pair",
+              "value": "=eq.{{ $json.pair }}"
+            },
+            {
+              "name": "status",
+              "value": "=eq.ACTIVE"
+            },
+            {
+              "name": "order",
+              "value": "time_formed.desc"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "e558a51f-b739-4f70-a2b6-dcdb05e54f9d",
+      "name": "4c. Fetch Levels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        304
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/dxy_correlation_log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "dxy_timeframe",
+              "value": "=in.(5M-1H,15M-4H)"
+            },
+            {
+              "name": "confirmation_status",
+              "value": "=in.(PENDING,EUR_CONFIRMED,GBP_CONFIRMED)"
+            },
+            {
+              "name": "order",
+              "value": "created_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "f27e603a-d183-4445-840e-7ea7b43a74b0",
+      "name": "4d. Fetch DXY",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        464
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/fractal_alerts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pair",
+              "value": "=eq.{{ $json.other_pair }}"
+            },
+            {
+              "name": "direction",
+              "value": "=eq.{{ $json.direction }}"
+            },
+            {
+              "name": "timeframe",
+              "value": "=eq.{{ $json.timeframe }}"
+            },
+            {
+              "name": "alert_type",
+              "value": "=eq.{{ $json.alert_type }}"
+            },
+            {
+              "name": "alert_timestamp",
+              "value": "=gte.{{ $now.minus(60, 'minutes').toISO() }}"
+            },
+            {
+              "name": "order",
+              "value": "alert_timestamp.desc"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "bedb7679-9aaa-4180-8ce8-354db62ae6eb",
+      "name": "4e. Fetch Other",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        608
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 5
+      },
+      "id": "fe81ea43-ce15-4065-8b68-82394d176cb6",
+      "name": "5. Merge Context",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        368,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/fractal_alerts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates"
+            },
+            {
+              "name": "prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.alertRecord) }}",
+        "options": {}
+      },
+      "id": "a24410c3-87fe-4eb2-882d-b3f122e1fa2c",
+      "name": "7. Insert Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        592
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has_dxy",
+              "leftValue": "={{ $json.dxy_correlation_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7bb7aa91-df8a-4c70-a20f-2cc04dd22fc0",
+      "name": "10. Has DXY?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://pauwero.app.n8n.cloud/webhook/dxy-confirmation",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "7f90ede7-e66b-420d-a664-8f3ab5531a0d",
+      "name": "11. Trigger WF5",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2816,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();"
+      },
+      "id": "c051b95d-61ae-4b34-bb91-5c1f0803fef6",
+      "name": "12. Skip WF5",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2656,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4: Format Discord - Trade Signal\n// Version: 1.7.0 - Enhanced with grade breakdown\n// ============================================\n\nconst data = $('6c. Grade').first().json;\n\nconst alert_record = $('7. Insert Alert').first().json;\nconst trade_record = $('9. Create Trade').first().json;\nconst alert_id = Array.isArray(alert_record) ? alert_record[0]?.id : alert_record?.id;\nconst trade_id = Array.isArray(trade_record) ? trade_record[0]?.id : trade_record?.id;\n\n// Grade emoji mapping\nconst grade_emoji = { \n  'A+': '🟢', \n  'A': '🟢', \n  'B': '🟡', \n  'C': '🟠',\n  'SKIP': '⚪'\n};\nconst emoji = grade_emoji[data.grade] || '⚪';\n\n// Session emoji\nconst session_emoji = {\n  'LONDON': '🇬🇧',\n  'NY': '🇺🇸',\n  'ASIA': '🌏',\n  'DEAD': '💀'\n};\nconst sess_emoji = session_emoji[data.current_session] || '⏰';\n\n// Direction arrow\nconst dir_arrow = data.direction === 'BULLISH' ? '📈' : '📉';\n\nconst testTag = data.is_test_mode ? ' [TEST]' : '';\nconst timestamp = new Date().toLocaleDateString('en-GB') + ' ' + \n                  new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });\n\n// ============================================\n// BUILD MESSAGE\n// ============================================\nlet content = '';\n\n// HEADER\ncontent += `${emoji} **NEW TRADE SIGNAL**${testTag}\\n`;\ncontent += `━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n\\n`;\n\n// SIGNAL INFO\ncontent += `${dir_arrow} **${data.pair}** • ${data.direction} • ${data.timeframe}\\n`;\ncontent += `📊 **Grade: ${data.grade}** (${data.score}/175 pts)\\n\\n`;\n\n// ENTRY DETAILS\ncontent += `**📍 Entry Zone**\\n`;\ncontent += `├─ Ideal: \\`${data.entry_ideal || 'N/A'}\\`\\n`;\ncontent += `├─ Zone: \\`${data.entry_zone_low || 'N/A'}\\` - \\`${data.entry_zone_high || 'N/A'}\\`\\n`;\ncontent += `└─ Alert Price: \\`${data.alert_price || 'N/A'}\\`\\n\\n`;\n\n// RISK MANAGEMENT\ncontent += `**🎯 Risk Management**\\n`;\ncontent += `├─ Stop Loss: \\`${data.stop_loss || 'N/A'}\\` (${data.stop_distance_pips || 0} pips)\\n`;\ncontent += `├─ Target: \\`${data.target_1 || 'N/A'}\\` (${data.target_type || 'N/A'})\\n`;\ncontent += `└─ R:R = **1:${data.planned_rr || 0}** • Risk: ${data.risk_percent || 0}%\\n\\n`;\n\n// CONTEXT\ncontent += `**📋 Context**\\n`;\ncontent += `├─ Session: ${sess_emoji} ${data.current_session}\\n`;\ncontent += `├─ Key Level: ${data.at_key_level ? '✅ ' + data.key_level_name : '❌ None'}\\n`;\ncontent += `├─ DXY Inverse: ${data.dxy_confirmed ? '✅ Confirmed' : '❌ No'}\\n`;\ncontent += `└─ Daily Bias: ${data.daily_bias || 'Unknown'}\\n\\n`;\n\n// GRADE BREAKDOWN\ncontent += `**⚖️ Grade Breakdown**\\n`;\n\n// Core factors\nif (data.core_factors && data.core_factors.length > 0) {\n  content += `├─ Core: ${data.core_factors}\\n`;\n}\n\n// Supporting factors\nif (data.supporting_factors && data.supporting_factors.length > 0) {\n  content += `├─ Supporting: ${data.supporting_factors}\\n`;\n}\n\n// Bonus factors\nif (data.bonus_factors && data.bonus_factors.length > 0) {\n  content += `├─ Bonus: ${data.bonus_factors}\\n`;\n}\n\n// Penalties\nif (data.penalties && data.penalties.length > 0) {\n  content += `├─ ⚠️ Penalties: ${data.penalties}\\n`;\n}\n\ncontent += `└─ Core Factors Met: ${data.core_count}/3\\n\\n`;\n\n// FOOTER\ncontent += `━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n`;\ncontent += `🔗 Alert #${alert_id || 'Pending'} • Trade #${trade_id || 'Pending'}\\n`;\ncontent += `_FractalEdge MVP v${data.workflow_version} • ${timestamp}_`;\n\nreturn [{ json: { content, alert_id, trade_id } }];"
+      },
+      "id": "4ce92056-0dbf-46d8-9ae3-e5a6407e6924",
+      "name": "13. Format Discord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3024,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.content }}",
+        "options": {}
+      },
+      "id": "09c559e6-0f7d-4920-a844-5da272474100",
+      "name": "14. Send Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        3248,
+        576
+      ],
+      "webhookId": "4933603f-9efb-43d6-8359-00a45cf7a366",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "6i2RAHPzV20VbdoP",
+          "name": "Discord Fractal Alerts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"error\",\n  \"error\": \"{{ $json.error }}\",\n  \"raw_message\": \"{{ $json.raw_message }}\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "7dd803d5-bfa4-4b00-99e8-dec08ae34e1d",
+      "name": "17. Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -752,
+        704
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1392,
+        448
+      ],
+      "id": "5b1227db-3bb4-4309-8fcf-f724b31c35c7",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/paper_trades",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.tradeRecord) }}",
+        "options": {}
+      },
+      "id": "240982f7-5cdf-4e98-bfd0-3538d8e0feb6",
+      "name": "9. Create Trade",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2032,
+        576
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "tradeable",
+              "leftValue": "={{ $('6c. Grade').item.json.is_tradeable }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "valid_rr",
+              "leftValue": "={{ $('6c. Grade').item.json.is_valid_rr }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e66c9f77-ba06-499a-85f9-f732796947c1",
+      "name": "8. Tradeable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4 STEP 6a: Price & Key Level Enrichment\n// Version: 1.7.2 - Added validation for all fetches\n// ============================================\n\nconst parsed = $('2. Parse Alert').first().json;\nconst pipValue = parsed.pair?.includes('JPY') ? 0.01 : 0.0001;\n\n// ============================================\n// VALIDATION: Check all fetch responses\n// ============================================\nconst errors = [];\n\n// Helper: Check for Supabase error response\nfunction checkSupabaseError(items, sourceName) {\n  if (!items || items.length === 0) return null;\n  const first = items[0]?.json;\n  if (first?.code || first?.message?.includes('error') || first?.error) {\n    return {\n      source: sourceName,\n      type: 'SUPABASE_ERROR',\n      message: first.message || first.error || 'Database error'\n    };\n  }\n  return null;\n}\n\n// Get raw data from fetch nodes\nconst ohlcItems = $('4a. Fetch OHLC').all();\nconst dailyItems = $('4b. Fetch Daily').all();\nconst levelItems = $('4c. Fetch Levels').all();\nconst dxyItems = $('4d. Fetch DXY').all();\nconst otherItems = $('4e. Fetch Other').all();\n\n// Validate each fetch\nconst ohlcError = checkSupabaseError(ohlcItems, 'OHLC');\nconst dailyError = checkSupabaseError(dailyItems, 'Daily Context');\nconst levelError = checkSupabaseError(levelItems, 'Key Levels');\nconst dxyError = checkSupabaseError(dxyItems, 'DXY Correlation');\nconst otherError = checkSupabaseError(otherItems, 'Other Pair');\n\nif (ohlcError) errors.push(ohlcError);\nif (dailyError) errors.push(dailyError);\nif (levelError) errors.push(levelError);\nif (dxyError) errors.push(dxyError);\nif (otherError) errors.push(otherError);\n\n// CRITICAL: Check if OHLC data is empty (needed for price enrichment)\nif (ohlcItems.length === 0 || !ohlcItems[0]?.json?.open) {\n  errors.push({\n    source: 'OHLC',\n    type: 'NO_DATA',\n    message: `No OHLC candles found for ${parsed.pair} ${parsed.base_tf_minutes}M`\n  });\n}\n\n// If we have critical errors, return error state\nif (errors.length > 0) {\n  const errorSummary = errors.map(e => `${e.source}: ${e.type}`).join(', ');\n  console.log('❌ Context fetch errors:', errorSummary);\n  \n  return [{\n    json: {\n      ...parsed,\n      hasErrors: true,\n      errors: errors,\n      errorSummary: errorSummary,\n      // Set defaults so downstream doesn't crash\n      has_ohlc_data: false,\n      at_key_level: false,\n      daily_bias: null,\n      alert_price: null\n    }\n  }];\n}\n\n// ============================================\n// GET DATA FROM SOURCE NODES - Simple and direct\n// ============================================\nconst ohlc_data = ohlcItems.map(item => item.json);\nconst daily = dailyItems.length > 0 ? dailyItems[0].json : {};\nconst levels = levelItems.map(item => item.json);\n\n// Debug: What did we actually get?\nconst _debug = {\n  ohlc_count: ohlc_data.length,\n  levels_count: levels.length,\n  has_daily: Object.keys(daily).length > 0,\n  ohlc_first: ohlc_data.length > 0 ? ohlc_data[0] : 'EMPTY',\n  query_params: { pair: parsed.pair, base_tf: parsed.base_tf }\n};\n\n// ============================================\n// C2 CANDLE - First item is most recent (query sorted desc)\n// ============================================\nconst triggerCandle = ohlc_data.length > 0 ? ohlc_data[0] : null;\nconst previousCandle = ohlc_data.length > 1 ? ohlc_data[1] : null;\n\n// ============================================\n// PRICE ENRICHMENT\n// ============================================\nlet c2_open = null, c2_high = null, c2_low = null, c2_close = null;\nlet c2_candle_time = null, c2_range_pips = null, c2_midpoint = null;\nlet alert_price = null, swing_price = null;\nlet price_source = 'NONE';\nconst has_ohlc = triggerCandle !== null;\n\nif (triggerCandle) {\n  c2_open = parseFloat(triggerCandle.open);\n  c2_high = parseFloat(triggerCandle.high);\n  c2_low = parseFloat(triggerCandle.low);\n  c2_close = parseFloat(triggerCandle.close);\n  c2_candle_time = triggerCandle.open_time;\n  c2_range_pips = (c2_high - c2_low) / pipValue;\n  c2_midpoint = (c2_high + c2_low) / 2;\n  \n  // Set prices based on alert type\n  alert_price = c2_close;\n  \n  if (parsed.alert_type === 'C2' || parsed.alert_type === 'CISD') {\n    swing_price = parsed.direction === 'BULLISH' ? c2_low : c2_high;\n    price_source = 'C2_CANDLE';\n  } else if (parsed.alert_type === 'C3' && previousCandle) {\n    swing_price = parsed.direction === 'BULLISH' \n      ? parseFloat(previousCandle.low) \n      : parseFloat(previousCandle.high);\n    price_source = 'C3_CLOSE';\n  } else {\n    swing_price = parsed.direction === 'BULLISH' ? c2_low : c2_high;\n    price_source = parsed.alert_type + '_CLOSE';\n  }\n}\n\n// ============================================\n// KEY LEVEL PROXIMITY\n// ============================================\nlet at_key_level = false;\nlet key_level_type = null;\nlet key_level_name = null;\nlet key_level_distance_pips = null;\nlet key_level_price = null;\n\nif (levels.length > 0 && alert_price) {\n  let minDist = Infinity;\n  \n  for (const level of levels) {\n    if (!level.price) continue;\n    \n    const levelPrice = parseFloat(level.price);\n    const distPips = Math.abs(alert_price - levelPrice) / pipValue;\n    \n    // Check if at key level (within 10 pips)\n    if (distPips <= 10) {\n      const expectedDir = (level.expected_direction || '').toUpperCase();\n      if (!expectedDir || expectedDir === parsed.direction) {\n        at_key_level = true;\n        key_level_type = level.level_type;\n        key_level_name = level.level_type;\n        key_level_price = levelPrice;\n        key_level_distance_pips = parseFloat(distPips.toFixed(1));\n        break;\n      }\n    }\n    \n    // Track nearest level\n    if (distPips < minDist) {\n      minDist = distPips;\n      if (!at_key_level) {\n        key_level_type = level.level_type;\n        key_level_name = level.level_type;\n        key_level_distance_pips = parseFloat(distPips.toFixed(1));\n      }\n    }\n  }\n}\n\n// ============================================\n// OUTPUT\n// ============================================\nreturn [{\n  json: {\n    // Pass through parsed data\n    ...parsed,\n    \n    // Validation passed\n    hasErrors: false,\n    \n    // C2 candle data\n    c2_candle_time,\n    c2_open: c2_open ? parseFloat(c2_open.toFixed(5)) : null,\n    c2_high: c2_high ? parseFloat(c2_high.toFixed(5)) : null,\n    c2_low: c2_low ? parseFloat(c2_low.toFixed(5)) : null,\n    c2_close: c2_close ? parseFloat(c2_close.toFixed(5)) : null,\n    c2_range_pips: c2_range_pips ? parseFloat(c2_range_pips.toFixed(1)) : null,\n    c2_midpoint: c2_midpoint ? parseFloat(c2_midpoint.toFixed(5)) : null,\n    \n    // Price data\n    alert_price: alert_price ? parseFloat(alert_price.toFixed(5)) : null,\n    swing_price: swing_price ? parseFloat(swing_price.toFixed(5)) : null,\n    price_source,\n    has_ohlc_data: has_ohlc,\n    \n    // Key level data\n    at_key_level,\n    key_level_type,\n    key_level_name,\n    key_level_distance_pips,\n    key_level_price,\n    \n    // Daily context\n    daily_bias: daily.daily_bias || null,\n    htf_direction: daily.htf_direction || null,\n    pdh: daily.pdh || null,\n    pdl: daily.pdl || null,\n    \n    // Debug\n    _debug\n  }\n}];"
+      },
+      "id": "556a402f-9df2-400e-94f7-b71dcf9e7696",
+      "name": "6a. Price & Level",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4 STEP 6b: Correlation Tracking\n// Version: 1.6.0\n// ============================================\n\nconst data = $input.first().json;\nconst parsed = $('2. Parse Alert').first().json;\n\n// Get DXY and Other pair data from merged context\nconst mergedItems = $('5. Merge Context').all();\nlet dxy_status = null, other_pair_signal = null;\n\nfor (const item of mergedItems) {\n  const d = item.json;\n  if (Array.isArray(d)) {\n    // Check if this is DXY correlation data\n    if (d.length > 0 && d[0].dxy_timeframe !== undefined) {\n      dxy_status = d[0];  // Most recent\n    }\n    // Check if this is other pair alerts\n    if (d.length > 0 && d[0].alert_type !== undefined && d[0].pair !== undefined) {\n      // Find matching other pair alert\n      const other = d.find(a => a.pair === parsed.other_pair);\n      if (other) other_pair_signal = other;\n    }\n  } else if (d && typeof d === 'object') {\n    if (d.dxy_timeframe !== undefined) dxy_status = d;\n    if (d.alert_type !== undefined && d.pair === parsed.other_pair) other_pair_signal = d;\n  }\n}\n\n// ============================================\n// DXY CORRELATION\n// ============================================\nconst dxy_confirmed = !!(dxy_status && \n  ['PENDING', 'EUR_CONFIRMED', 'GBP_CONFIRMED'].includes(dxy_status.confirmation_status));\nconst dxy_correlation_id = dxy_status?.id || null;\nconst dxy_timeframe = dxy_status?.dxy_timeframe || null;\nconst dxy_direction = dxy_status?.dxy_direction || null;\nconst dxy_lead_time_min = dxy_status?.window_start \n  ? Math.round((Date.now() - new Date(dxy_status.window_start).getTime()) / 60000) \n  : null;\nconst dxy_reliability_tier = dxy_status?.reliability_tier || null;\n\n// ============================================\n// CURRENCY LEAD TRACKING\n// ============================================\nlet currency_lead_data = null;\nif (other_pair_signal?.id && other_pair_signal.alert_timestamp) {\n  const leader = other_pair_signal.pair === 'EURUSD' ? 'EUR' : 'GBP';\n  const follower = parsed.pair === 'EURUSD' ? 'EUR' : 'GBP';\n  const lead_minutes = Math.round((Date.now() - new Date(other_pair_signal.alert_timestamp).getTime()) / 60000);\n  currency_lead_data = { \n    leader, \n    follower, \n    lead_minutes, \n    other_alert_id: other_pair_signal.id, \n    pattern: `${leader} led by ${lead_minutes} min` \n  };\n} else {\n  const leader = parsed.pair === 'EURUSD' ? 'EUR' : 'GBP';\n  currency_lead_data = { \n    leader, \n    follower: null, \n    lead_minutes: 0, \n    other_alert_id: null, \n    pattern: `${leader} fired first` \n  };\n}\n\n// ============================================\n// OUTPUT - Merge with previous data\n// ============================================\nreturn [{ json: {\n  ...data,\n  \n  // DXY correlation\n  dxy_confirmed,\n  dxy_correlation_id,\n  dxy_timeframe,\n  dxy_direction,\n  dxy_lead_time_min,\n  dxy_reliability_tier,\n  \n  // Currency lead\n  currency_lead_data,\n  \n  // Debug\n  _correlation_debug: {\n    dxy_found: !!dxy_status,\n    other_found: !!other_pair_signal,\n    dxy_status: dxy_status ? dxy_status.confirmation_status : null\n  }\n}}];"
+      },
+      "id": "69527177-60b6-43b5-ac0d-3a4bd43dbe57",
+      "name": "6b. Correlation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4 STEP 6c: Grade Calculation\n// Version: 1.7.0 - Added DEAD penalty, HTF bonus\n// ============================================\n\nconst data = $input.first().json;\nconst pipValue = data.pair?.includes('JPY') ? 0.01 : 0.0001;\n\n// ============================================\n// GRADE CALCULATION\n// ============================================\nlet score = 0, core_count = 0;\nconst core_factors = [], supporting_factors = [], bonus_factors = [], penalties = [];\n\n// CORE FACTORS (max 75 points)\n// +30: At key level (PDH/PDL/PWH/PWL/Session highs/lows)\nif (data.at_key_level) { \n  score += 30; \n  core_count++; \n  core_factors.push('KEY_LEVEL +30'); \n}\n\n// +25: Confirmed CISD event (C2 or explicit CISD)\nif (data.is_cisd_event && data.alert_status === 'CONFIRMED') { \n  score += 25; \n  core_count++; \n  core_factors.push('CISD_CONFIRMED +25'); \n}\n\n// +20: Valid trading session (Asia/London/NY)\nif (data.is_valid_session && data.current_session !== 'DEAD') { \n  score += 20; \n  core_count++; \n  core_factors.push('VALID_SESSION +20'); \n}\n\n// PENALTIES\n// -20: DEAD session (17:00-00:00 UTC) - low liquidity, unreliable\nif (data.current_session === 'DEAD') {\n  score -= 20;\n  penalties.push('DEAD_SESSION -20');\n}\n\n// -20: Potential CISD (not yet confirmed)\nif (data.is_potential_cisd) {\n  score -= 20;\n  penalties.push('POTENTIAL_CISD -20');\n}\n\n// SUPPORTING FACTORS (max 50 points)\n// +15: Daily bias alignment\nif (data.daily_bias && data.daily_bias.toUpperCase() === data.direction) { \n  score += 15; \n  supporting_factors.push('DAILY_BIAS_ALIGNED +15'); \n}\n\n// -10: Daily bias conflict (opposing direction)\nif (data.daily_bias && \n    data.daily_bias.toUpperCase() !== data.direction && \n    data.daily_bias.toUpperCase() !== 'NEUTRAL' &&\n    data.daily_bias.toUpperCase() !== 'NONE') {\n  score -= 10;\n  penalties.push('DAILY_BIAS_CONFLICT -10');\n}\n\n// +10: HTF direction alignment\nif (data.htf_direction && data.htf_direction.toUpperCase() === data.direction) { \n  score += 10; \n  supporting_factors.push('HTF_ALIGNED +10'); \n}\n\n// +10: DXY inverse correlation confirmed\nif (data.dxy_confirmed) { \n  score += 10; \n  supporting_factors.push('DXY_CONFIRMED +10'); \n}\n\n// +10: 15M-4H structural timeframe bonus (higher reliability)\nif (data.timeframe === '15M-4H') {\n  score += 10;\n  supporting_factors.push('HTF_STRUCTURAL +10');\n}\n\n// +5: DXY lead time bonus (DXY signaled 10+ min before)\nif (data.dxy_lead_time_min && data.dxy_lead_time_min >= 10) {\n  score += 5;\n  bonus_factors.push('DXY_LEAD_TIME +5');\n}\n\n// BONUS FACTORS (max 25 points)\n// +8: SMT divergence between pairs\nif (data.alert_type === 'SMT') { \n  score += 8; \n  bonus_factors.push('SMT_DIVERGENCE +8'); \n}\n\n// +7: C3 confirmation (continuation after C2)\nif (data.alert_type === 'C3') { \n  score += 7; \n  bonus_factors.push('C3_CONTINUATION +7'); \n}\n\n// +5: C4 extended continuation\nif (data.alert_type === 'C4') { \n  score += 5; \n  bonus_factors.push('C4_EXTENDED +5'); \n}\n\n// +6: Manipulation/liquidity grab detected\nif (data.alert_type === 'MANIPULATION') { \n  score += 6; \n  bonus_factors.push('MANIPULATION +6'); \n}\n\n// +5: London session bonus (highest volatility)\nif (data.current_session === 'LONDON') {\n  score += 5;\n  bonus_factors.push('LONDON_SESSION +5');\n}\n\n// +10: Both pairs confirmed (from currency_lead_data)\nif (data.currency_lead_data?.follower && data.currency_lead_data?.leader) {\n  score += 10;\n  bonus_factors.push('PAIR_CONFLUENCE +10');\n}\n\n// ============================================\n// GRADE DETERMINATION\n// ============================================\nlet grade, entry_scenario, risk_percent;\n\n// A+ requires all 3 core factors AND high score\nif (score >= 130 && core_count === 3) { \n  grade = 'A+'; \n  entry_scenario = 'AGGRESSIVE'; \n  risk_percent = 2.0; \n} else if (score >= 105) { \n  grade = 'A'; \n  entry_scenario = 'AGGRESSIVE'; \n  risk_percent = 1.5; \n} else if (score >= 85) { \n  grade = 'B'; \n  entry_scenario = 'CONSERVATIVE'; \n  risk_percent = 1.0; \n} else if (score >= 65 && core_count >= 2) { \n  grade = 'C'; \n  entry_scenario = 'CONSERVATIVE'; \n  risk_percent = 0.5; \n} else { \n  grade = 'SKIP'; \n  entry_scenario = 'NONE'; \n  risk_percent = 0; \n}\n\n// Downgrade potential CISD to research only\nif (data.is_potential_cisd && grade !== 'SKIP') {\n  grade = grade + '_POTENTIAL';\n  entry_scenario = 'RESEARCH_ONLY';\n  risk_percent = 0;\n}\n\nconst is_tradeable = grade !== 'SKIP' && \n                     !grade.includes('POTENTIAL') &&\n                     entry_scenario !== 'RESEARCH_ONLY' && \n                     entry_scenario !== 'NONE';\n\n// ============================================\n// ENTRY/STOP/TARGET CALCULATION\n// ============================================\nlet entry_zone_low = null, entry_zone_high = null, entry_ideal = null;\nlet stop_loss = null, stop_loss_type = null, stop_distance_pips = null;\nlet target_1 = null, target_type = null, target_r_value = null, planned_rr = null;\nlet is_valid_rr = false;\n\nif (is_tradeable && data.c2_high != null && data.c2_low != null && data.c2_midpoint != null) {\n  const buffer = 2;\n  const min_r = 2.0;\n  \n  if (data.direction === 'BULLISH') {\n    // Entry zone: upper half of C2 candle\n    entry_zone_low = data.c2_midpoint;\n    entry_zone_high = data.c2_high;\n    entry_ideal = data.c2_midpoint + ((data.c2_high - data.c2_midpoint) * 0.25);\n    stop_loss = data.c2_low - (buffer * pipValue);\n    stop_loss_type = 'C2_LOW';\n  } else {\n    // Entry zone: lower half of C2 candle\n    entry_zone_low = data.c2_low;\n    entry_zone_high = data.c2_midpoint;\n    entry_ideal = data.c2_low + ((data.c2_midpoint - data.c2_low) * 0.75);\n    stop_loss = data.c2_high + (buffer * pipValue);\n    stop_loss_type = 'C2_HIGH';\n  }\n  \n  stop_distance_pips = Math.abs(entry_ideal - stop_loss) / pipValue;\n  \n  // Calculate target - prefer daily liquidity if available\n  if (data.direction === 'BULLISH') {\n    const min_target = entry_ideal + (stop_distance_pips * min_r * pipValue);\n    if (data.pdh != null && parseFloat(data.pdh) >= min_target) {\n      target_1 = parseFloat(data.pdh);\n      target_type = 'PDH';\n    } else {\n      target_1 = min_target;\n      target_type = 'CALCULATED_2R';\n    }\n  } else {\n    const min_target = entry_ideal - (stop_distance_pips * min_r * pipValue);\n    if (data.pdl != null && parseFloat(data.pdl) <= min_target) {\n      target_1 = parseFloat(data.pdl);\n      target_type = 'PDL';\n    } else {\n      target_1 = min_target;\n      target_type = 'CALCULATED_2R';\n    }\n  }\n  \n  target_r_value = Math.abs(target_1 - entry_ideal) / (stop_distance_pips * pipValue);\n  planned_rr = target_r_value;\n  is_valid_rr = planned_rr >= min_r;\n  \n  // Format values\n  entry_zone_low = parseFloat(entry_zone_low.toFixed(5));\n  entry_zone_high = parseFloat(entry_zone_high.toFixed(5));\n  entry_ideal = parseFloat(entry_ideal.toFixed(5));\n  stop_loss = parseFloat(stop_loss.toFixed(5));\n  stop_distance_pips = parseFloat(stop_distance_pips.toFixed(1));\n  target_1 = parseFloat(target_1.toFixed(5));\n  target_r_value = parseFloat(target_r_value.toFixed(2));\n  planned_rr = parseFloat(planned_rr.toFixed(2));\n}\n\n// Final tradeable check includes valid RR\nconst final_is_tradeable = is_tradeable && is_valid_rr;\n\n// ============================================\n// BUILD GRADE SUMMARY FOR DISCORD\n// ============================================\nconst grade_breakdown = {\n  core: core_factors,\n  supporting: supporting_factors,\n  bonus: bonus_factors,\n  penalties: penalties,\n  core_count,\n  total_score: score\n};\n\n// ============================================\n// OUTPUT\n// ============================================\nreturn [{ json: {\n  ...data,\n  \n  // Grade data\n  grade,\n  score,\n  core_count,\n  core_factors: core_factors.join(', '),\n  supporting_factors: supporting_factors.join(', '),\n  bonus_factors: bonus_factors.join(', '),\n  penalties: penalties.join(', '),\n  grade_breakdown,\n  entry_scenario,\n  risk_percent,\n  is_tradeable: final_is_tradeable,\n  \n  // Entry/Stop/Target\n  entry_zone_low,\n  entry_zone_high,\n  entry_ideal,\n  stop_loss,\n  stop_loss_type,\n  stop_distance_pips,\n  target_1,\n  target_type,\n  target_r_value,\n  planned_rr,\n  is_valid_rr\n}}];"
+      },
+      "id": "9c57bfd6-cd0d-4b7e-884f-90ccb2446924",
+      "name": "6c. Grade",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4: Log Execution (Non-Tradeable)\n// Version: 1.6.3\n// ============================================\n\n// Get the enriched data from grading\nconst data = $('6c. Grade').first().json;\n\n// Get the inserted alert record\nconst alertResponse = $input.first().json;\nconst alert_id = Array.isArray(alertResponse) ? alertResponse[0]?.id : alertResponse?.id;\n\n// Determine skip reason\nlet skip_reason = 'UNKNOWN';\nif (data.is_potential_cisd) {\n  skip_reason = 'POTENTIAL_CISD';\n} else if (data.grade === 'SKIP') {\n  skip_reason = 'LOW_GRADE';\n} else if (!data.is_valid_rr) {\n  skip_reason = 'INVALID_RR';\n} else if (!data.is_valid_session) {\n  skip_reason = 'INVALID_SESSION';\n}\n\n// Build execution log\nconst executionLog = {\n  status: 'LOGGED',\n  alert_id,\n  pair: data.pair,\n  timeframe: data.timeframe,\n  direction: data.direction,\n  alert_type: data.alert_type,\n  grade: data.grade,\n  score: data.score,\n  skip_reason,\n  \n  // Context for research\n  at_key_level: data.at_key_level,\n  dxy_confirmed: data.dxy_confirmed,\n  session: data.current_session,\n  \n  // Prices (if available)\n  alert_price: data.alert_price,\n  swing_price: data.swing_price,\n  \n  // Timestamp\n  logged_at: new Date().toISOString(),\n  is_test_mode: data.is_test_mode || false\n};\n\nreturn [{ json: executionLog }];\n"
+      },
+      "id": "b7ec76a0-cf72-4169-be6e-d71e3b755dca",
+      "name": "📋 Log Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fractal-alert",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "1fa23eff-4e24-432a-a601-53e6e6f34a4f",
+      "name": "Fractal Alert EURUSD",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1296,
+        80
+      ],
+      "webhookId": "fractal-alert-webhook"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fractal-alert-GBPUSD",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "f40a787d-f005-4738-be60-b06c1df8c1eb",
+      "name": "Fractal Alert GBPUSD",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1296,
+        240
+      ],
+      "webhookId": "fractal-alert-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4 STEP 6d: Prepare Alert Record\n// Version: 1.7.0 - Safe JSON building\n// ============================================\n\nconst data = $input.first().json;\n\n// Safe helpers - prevent undefined/null from breaking JSON\nconst safeStr = (val) => (val === undefined || val === null) ? null : String(val);\nconst safeNum = (val) => {\n  if (val === undefined || val === null) return null;\n  const num = parseFloat(val);\n  return isNaN(num) ? null : num;\n};\nconst safeBool = (val) => (val === undefined || val === null) ? false : Boolean(val);\n\nconst alertRecord = {\n  raw_message: safeStr(data.raw_message),\n  pair: safeStr(data.pair),\n  timeframe: safeStr(data.timeframe),\n  alert_type: safeStr(data.alert_type),\n  direction: safeStr(data.direction),\n  alert_status: safeStr(data.alert_status),\n  smt_pair: safeStr(data.smt_pair),\n  is_cisd_event: safeBool(data.is_cisd_event),\n  is_potential_cisd: safeBool(data.is_potential_cisd),\n  received_at: safeStr(data.received_at),\n  session: safeStr(data.current_session),\n  alert_price: safeNum(data.alert_price),\n  swing_price: safeNum(data.swing_price),\n  price_source: safeStr(data.price_source),\n  c2_open: safeNum(data.c2_open),\n  c2_high: safeNum(data.c2_high),\n  c2_low: safeNum(data.c2_low),\n  c2_close: safeNum(data.c2_close),\n  c2_candle_time: safeStr(data.c2_candle_time),\n  c2_range_pips: safeNum(data.c2_range_pips),\n  c2_midpoint: safeNum(data.c2_midpoint),\n  at_key_level: safeBool(data.at_key_level),\n  key_level_type: safeStr(data.key_level_type),\n  key_level_name: safeStr(data.key_level_name),\n  key_level_distance_pips: safeNum(data.key_level_distance_pips),\n  dxy_inverse_confirmed: safeBool(data.dxy_confirmed),\n  dxy_correlation_id: safeNum(data.dxy_correlation_id),\n  dxy_timeframe: safeStr(data.dxy_timeframe),\n  dxy_lead_time_min: safeNum(data.dxy_lead_time_min),\n  alert_significance: safeStr(data.grade),\n  grade_score: safeNum(data.score) || 0,\n  core_factors: safeStr(data.core_factors) || '',\n  supporting_factors: safeStr(data.supporting_factors) || '',\n  is_tradeable_signal: safeBool(data.is_tradeable && data.is_valid_rr),\n  enriched: true,\n  enriched_at: new Date().toISOString()\n};\n\n\nreturn [{ json: { alertRecord, data } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        592
+      ],
+      "id": "23293df1-c9ba-421c-bca0-34808ac1353b",
+      "name": "Prepare alert"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ea3ea0b2-feb2-4316-a8bc-a82431ccedc1",
+              "leftValue": "=={{ $json.timeframe }}",
+              "rightValue": "1M",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -496,
+        320
+      ],
+      "id": "64a66307-4fd6-4cf6-9c11-ba993fd483e6",
+      "name": "Check Timeframe"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4: Prepare Research Alert (1M-15M only)\n// Version: 1.7.0\n// ============================================\n\nconst data = $input.first().json;\n\nconst alertRecord = {\n  raw_message: data.raw_message,\n  pair: data.pair,\n  timeframe: data.timeframe,\n  direction: data.direction || null,\n  alert_type: data.alert_type,\n  alert_status: data.alert_status,\n  smt_pair: data.smt_pair || null,\n  is_cisd_event: data.is_cisd_event || false,\n  is_potential_cisd: data.is_potential_cisd || false,\n  received_at: data.received_at,\n  session: data.current_session,\n  alert_significance: 'RESEARCH',\n  grade_score: 0,\n  core_factors: '',\n  supporting_factors: '',\n  is_tradeable_signal: false,\n  enriched: false\n};\n\nreturn [{ json: { alertRecord, ...data } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -496,
+        720
+      ],
+      "id": "b65df87b-481b-4f67-ac61-ad3003d84d09",
+      "name": "3c. Prepare Research"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://eooqdkupnrgknstjvkwc.supabase.co/rest/v1/fractal_alerts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates"
+            },
+            {
+              "name": "prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.alertRecord) }}",
+        "options": {}
+      },
+      "id": "796347ca-0817-46db-bd74-cf58bd4c7413",
+      "name": "7. Insert Research Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -288,
+        720
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "pjSZbk3nG1w7ul3E",
+          "name": "Fractal Production DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4: Prepare Trade Record\n// Version: 1.7.0 - Safe JSON building\n// ============================================\n\nconst data = $('6c. Grade').first().json;\nconst alertResponse = $('7. Insert Alert').first().json;\nconst alertId = Array.isArray(alertResponse) ? alertResponse[0]?.id : alertResponse?.id;\n\n// Safe helpers\nconst safeStr = (val) => (val === undefined || val === null) ? null : String(val);\nconst safeNum = (val) => {\n  if (val === undefined || val === null) return null;\n  const num = parseFloat(val);\n  return isNaN(num) ? null : num;\n};\nconst safeBool = (val) => (val === undefined || val === null) ? false : Boolean(val);\n\n// Map direction: BULLISH -> LONG, BEARISH -> SHORT\nconst tradeDirection = data.direction === 'BULLISH' ? 'LONG' : 'SHORT';\n\n// Map alert_type for CHECK constraint (only C2, C3, C4 allowed)\nlet triggerAlertType = data.alert_type;\nif (triggerAlertType === 'CISD' || triggerAlertType === 'MANIPULATION') {\n  triggerAlertType = 'C2';\n}\n\n// Map target_type for CHECK constraint\nlet target1Type = 'FORMATION_LIQUIDITY';\nif (data.target_type === 'PDH' || data.target_type === 'PDL') {\n  target1Type = 'DAILY_LIQUIDITY';\n}\n\n// Calculate reward pips\nconst riskPips = safeNum(data.stop_distance_pips) || 0;\nconst plannedRR = safeNum(data.planned_rr) || 2;\nconst rewardPips = parseFloat((riskPips * plannedRR).toFixed(2));\n\nconst tradeRecord = {\n  // Core identifiers\n  pair: safeStr(data.pair),\n  direction: tradeDirection,\n  timeframe: safeStr(data.timeframe),\n  setup_type: 'KEY_LEVEL_REVERSAL',\n  \n  // Alert linkage\n  trigger_alert_type: triggerAlertType,\n  trigger_fractal_alert_id: safeStr(alertId),\n  alert_type: safeStr(data.alert_type),\n  alert_status: safeStr(data.alert_status),\n  alert_price: safeNum(data.alert_price),\n  swing_price: safeNum(data.swing_price),\n  \n  // Key level\n  key_level_type: safeStr(data.key_level_type) || 'UNKNOWN',\n  key_level_price: safeNum(data.key_level_price) || safeNum(data.alert_price) || 0,\n  key_level_distance_pips: safeNum(data.key_level_distance_pips),\n  key_level_name: safeStr(data.key_level_name),\n  at_key_level: safeBool(data.at_key_level),\n  \n  // Pattern\n  reversal_pattern: data.alert_type === 'C3' ? 'C3_CLOSURE' : 'C2_CLOSURE',\n  entry_candle: data.alert_type === 'C3' ? 'C3' : 'C2',\n  \n  // C2 candle data\n  c2_candle_time: safeStr(data.c2_candle_time),\n  c2_open: safeNum(data.c2_open),\n  c2_high: safeNum(data.c2_high),\n  c2_low: safeNum(data.c2_low),\n  c2_close: safeNum(data.c2_close),\n  c2_range_pips: safeNum(data.c2_range_pips),\n  c2_midpoint: safeNum(data.c2_midpoint),\n  \n  // Entry\n  entry_scenario: safeStr(data.entry_scenario),\n  entry_zone_low: safeNum(data.entry_zone_low),\n  entry_zone_high: safeNum(data.entry_zone_high),\n  entry_zone_ideal: safeNum(data.entry_ideal),\n  entry_price: safeNum(data.entry_ideal),\n  entry_ideal: safeNum(data.entry_ideal),\n  \n  // Grade\n  grade: safeStr(data.grade),\n  grade_score: safeNum(data.score) || 0,\n  core_factors: safeStr(data.core_factors),\n  supporting_factors: safeStr(data.supporting_factors),\n  core_factor_count: safeNum(data.core_count) || 0,\n  \n  // Stop loss\n  stop_loss: safeNum(data.stop_loss),\n  stop_type: safeStr(data.stop_loss_type),\n  stop_loss_type: safeStr(data.stop_loss_type),\n  \n  // Target\n  target_1: safeNum(data.target_1),\n  target_1_type: target1Type,\n  target_1_r: safeNum(data.target_r_value),\n  target_type: safeStr(data.target_type),\n  target_r_value: safeNum(data.target_r_value),\n  \n  // Risk management\n  risk_pips: riskPips,\n  reward_pips: rewardPips,\n  risk_percent: safeNum(data.risk_percent),\n  planned_rr: plannedRR,\n  \n  // DXY correlation\n  dxy_confirmed: safeBool(data.dxy_confirmed),\n  dxy_correlation_id: safeNum(data.dxy_correlation_id),\n  currency_lead_data: data.currency_lead_data || null,\n  \n  // Status\n  status: 'ACTIVE',\n  is_test_data: safeBool(data.is_test_mode)\n};\n\nreturn [{ json: { tradeRecord, ...data } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        576
+      ],
+      "id": "67311cc1-4b73-4ea1-b8e6-f5c5a400f031",
+      "name": "Prepare Trade"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// WF4: Prepare WF5 Trigger Data\n// Version: 1.7.0 - Safe JSON building\n// ============================================\n\nconst gradeData = $('6c. Grade').first().json;\nconst alertResponse = $('7. Insert Alert').first().json;\nconst alertId = Array.isArray(alertResponse) ? alertResponse[0]?.id : alertResponse?.id;\n\nconst triggerData = {\n  correlation_id: gradeData.dxy_correlation_id || null,\n  confirming_pair: gradeData.pair || null,\n  confirming_alert_id: alertId || null,\n  confirming_direction: gradeData.direction || null,\n  confirmed_at: gradeData.received_at || new Date().toISOString()\n};\n\nreturn [{ json: triggerData }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2528,
+        464
+      ],
+      "id": "52c2759e-166d-41ff-a05b-1aead4cc4835",
+      "name": "10.b Prepare WF5 Trigger"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1569dd4f-b808-4c5d-b5d1-cbd195a95619",
+              "leftValue": "={{ $json.hasErrors }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        944,
+        144
+      ],
+      "id": "78e1c089-a19a-4988-bf47-60b8007b888f",
+      "name": "6a-check. Has Fetch Errors?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://pauwero.app.n8n.cloud/webhook/error-handler",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"workflow_name\": \"WF4_ALERT_PROCESSOR\",\n  \"log_level\": \"ERROR\",\n  \"message\": \"Context fetch failed: {{ $json.errorSummary }}\",\n  \"node_name\": \"6a. Price & Level\",\n  \"context\": {\n    \"pair\": \"{{ $json.pair }}\",\n    \"timeframe\": \"{{ $json.timeframe }}\",\n    \"errors\": {{ JSON.stringify($json.errors) }}\n  }\n}\n",
+        "options": {}
+      },
+      "id": "7c17964f-fbc0-4471-ab63-dea6a084f011",
+      "name": "🔔 Call Error Handler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        128
+      ],
+      "notes": "Only triggered on error path"
+    }
+  ],
+  "pinData": {
+    "Fractal Alert GBPUSD": [
+      {
+        "json": {
+          "headers": {
+            "host": "pauwero.app.n8n.cloud",
+            "user-agent": "Go-http-client/1.1",
+            "content-length": "41",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "52.32.178.7",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "US",
+            "cf-ray": "9b6139dae318503f-PDX",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "text/plain; charset=utf-8",
+            "x-forwarded-for": "52.32.178.7, 104.23.160.228",
+            "x-forwarded-host": "pauwero.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-81-6b7d5f4f4f-6g9dm",
+            "x-is-trusted": "yes",
+            "x-real-ip": "52.32.178.7"
+          },
+          "params": {},
+          "query": {},
+          "body": "1m-15m GBPUSD: Potential Bullish Candle 2",
+          "webhookUrl": "https://pauwero.app.n8n.cloud/webhook/fractal-alert-GBPUSD",
+          "executionMode": "production"
+        },
+        "binary": {
+          "data": {
+            "data": "MW0tMTVtIEdCUFVTRDogUG90ZW50aWFsIEJ1bGxpc2ggQ2FuZGxlIDI=",
+            "mimeType": "text/plain"
+          }
+        }
+      }
+    ]
+  },
+  "connections": {
+    "1b. Manual Test": {
+      "main": [
+        [
+          {
+            "node": "2. Parse Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Parse Alert": {
+      "main": [
+        [
+          {
+            "node": "3. Check Validity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Check Validity": {
+      "main": [
+        [
+          {
+            "node": "Check Timeframe",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "17. Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4a. Fetch OHLC": {
+      "main": [
+        [
+          {
+            "node": "5. Merge Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4b. Fetch Daily": {
+      "main": [
+        [
+          {
+            "node": "5. Merge Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "4c. Fetch Levels": {
+      "main": [
+        [
+          {
+            "node": "5. Merge Context",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "4d. Fetch DXY": {
+      "main": [
+        [
+          {
+            "node": "5. Merge Context",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "4e. Fetch Other": {
+      "main": [
+        [
+          {
+            "node": "5. Merge Context",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "5. Merge Context": {
+      "main": [
+        [
+          {
+            "node": "6a. Price & Level",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. Insert Alert": {
+      "main": [
+        [
+          {
+            "node": "8. Tradeable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10. Has DXY?": {
+      "main": [
+        [
+          {
+            "node": "10.b Prepare WF5 Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "12. Skip WF5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11. Trigger WF5": {
+      "main": [
+        [
+          {
+            "node": "13. Format Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12. Skip WF5": {
+      "main": [
+        [
+          {
+            "node": "13. Format Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13. Format Discord": {
+      "main": [
+        []
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "1b. Manual Test",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9. Create Trade": {
+      "main": [
+        [
+          {
+            "node": "10. Has DXY?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8. Tradeable?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Trade",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📋 Log Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6a. Price & Level": {
+      "main": [
+        [
+          {
+            "node": "6a-check. Has Fetch Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6b. Correlation": {
+      "main": [
+        [
+          {
+            "node": "6c. Grade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6c. Grade": {
+      "main": [
+        [
+          {
+            "node": "Prepare alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fractal Alert EURUSD": {
+      "main": [
+        [
+          {
+            "node": "2. Parse Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fractal Alert GBPUSD": {
+      "main": [
+        [
+          {
+            "node": "2. Parse Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare alert": {
+      "main": [
+        [
+          {
+            "node": "7. Insert Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Timeframe": {
+      "main": [
+        [
+          {
+            "node": "4a. Fetch OHLC",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "4b. Fetch Daily",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "4c. Fetch Levels",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "4d. Fetch DXY",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "4e. Fetch Other",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "3c. Prepare Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3c. Prepare Research": {
+      "main": [
+        [
+          {
+            "node": "7. Insert Research Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Trade": {
+      "main": [
+        [
+          {
+            "node": "9. Create Trade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10.b Prepare WF5 Trigger": {
+      "main": [
+        [
+          {
+            "node": "11. Trigger WF5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6a-check. Has Fetch Errors?": {
+      "main": [
+        [
+          {
+            "node": "🔔 Call Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "6b. Correlation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "ZXiIfbwA3d00Lai2XTM8G"
+  },
+  "versionId": "be62e2e7-da3e-4ccc-9c26-ffb17864de54",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "770937ba4b97bfaabc95932bec85fc91e783902ae29c4fe94eb9c2f20dc601eb"
+  },
+  "id": "4JsxbG_Eik5-6ROHJmyyD",
+  "tags": [
+    {
+      "updatedAt": "2026-01-28T07:18:41.313Z",
+      "createdAt": "2026-01-28T07:18:41.313Z",
+      "id": "R0NhpgnXQ7quCPA7",
+      "name": "Trading"
+    },
+    {
+      "updatedAt": "2026-02-02T13:37:59.378Z",
+      "createdAt": "2026-02-02T13:37:59.378Z",
+      "id": "IbCSHmCWVDdprff7",
+      "name": "Alert Processing"
+    },
+    {
+      "updatedAt": "2026-02-02T13:37:59.388Z",
+      "createdAt": "2026-02-02T13:37:59.388Z",
+      "id": "QffumRq8FXGfznP4",
+      "name": "FA1880"
+    },
+    {
+      "updatedAt": "2026-02-02T13:37:59.392Z",
+      "createdAt": "2026-02-02T13:37:59.392Z",
+      "id": "nvZDRhTWj41og71k",
+      "name": "Alerts"
+    }
+  ]
+}
