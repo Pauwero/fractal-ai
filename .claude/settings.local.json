@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where python)",
+      "Bash(py --list)",
+      "Bash(py -3.14 -m pip show pytest)",
+      "Bash(py -3.14 -m pip show pydantic)",
+      "Bash(py -3.14 -m pip install pytest pydantic)",
+      "Bash(py -3.14 -m pytest tests/unit/test_swing_detection.py -v)"
+    ]
+  }
+}
