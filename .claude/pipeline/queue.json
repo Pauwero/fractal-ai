@@ -1,0 +1,56 @@
+{
+  "pipeline_id": "",
+  "hypothesis_id": "",
+  "started_at": "",
+  "status": "NOT_STARTED",
+  "steps": [
+    {
+      "step_number": 1,
+      "agent": "research-analyst",
+      "description": "Classify intent & register hypothesis",
+      "status": "PENDING",
+      "completed_at": null,
+      "gate_message": null
+    },
+    {
+      "step_number": 2,
+      "agent": "devils-advocate",
+      "description": "Challenge hypothesis + design queries",
+      "status": "PENDING",
+      "completed_at": null,
+      "gate_message": "Review hypothesis + query plan before data execution"
+    },
+    {
+      "step_number": 3,
+      "agent": "quant-analyst",
+      "description": "Execute queries & record findings",
+      "status": "PENDING",
+      "completed_at": null,
+      "gate_message": null
+    },
+    {
+      "step_number": 4,
+      "agent": "statistical-auditor",
+      "description": "Validate rigor + adversarial challenge",
+      "status": "PENDING",
+      "completed_at": null,
+      "gate_message": "Review ALL evidence before synthesis"
+    },
+    {
+      "step_number": 5,
+      "agent": "synthesizer",
+      "description": "Synthesize conclusions (Opus)",
+      "status": "PENDING",
+      "completed_at": null,
+      "gate_message": null
+    },
+    {
+      "step_number": 6,
+      "agent": "rule-formulator",
+      "description": "Formulate trading rules (conditional)",
+      "status": "PENDING",
+      "completed_at": null,
+      "gate_message": "Review proposed rules — final gate"
+    }
+  ]
+}

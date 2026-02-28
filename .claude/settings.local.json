@@ -6,7 +6,14 @@
       "Bash(py -3.14 -m pip show pytest)",
       "Bash(py -3.14 -m pip show pydantic)",
       "Bash(py -3.14 -m pip install pytest pydantic)",
-      "Bash(py -3.14 -m pytest tests/unit/test_swing_detection.py -v)"
+      "Bash(py -3.14 -m pytest tests/unit/test_swing_detection.py -v)",
+      "Bash(chmod +x /c/Users/RobinPauwels/Documents/Fractal/fractal-ai/.claude/hooks/on-pipeline-step.sh)",
+      "Bash(python3 -c \"import json; json.load\\(open\\(''.claude/settings.json''\\)\\); print\\(''settings.json: valid JSON''\\)\")",
+      "Bash(python3 -c \"import json; q=json.load\\(open\\(''.claude/pipeline/queue.json''\\)\\); print\\(f''queue.json: valid JSON, {len\\(q[\"\"steps\"\"]\\)} steps''\\); [print\\(f''  Step {s[\"\"step_number\"\"]}: {s[\"\"agent\"\"]} \\({s[\"\"status\"\"]}\\)''\\) for s in q[''steps'']]\")",
+      "Bash(py -3.14 -c \"import json; json.load\\(open\\(''.claude/settings.json''\\)\\); print\\(''settings.json: valid JSON''\\)\")",
+      "Bash(py -3.14 -c \"import json; q=json.load\\(open\\(''.claude/pipeline/queue.json''\\)\\); print\\(f''queue.json: valid JSON, {len\\(q[\"\"steps\"\"]\\)} steps''\\); [print\\(f''  Step {s[\"\"step_number\"\"]}: {s[\"\"agent\"\"]} \\({s[\"\"status\"\"]}\\)''\\) for s in q[''steps'']]\")",
+      "Bash(bash .claude/hooks/on-pipeline-step.sh)",
+      "Bash(echo \"Exit code: $?\")"
     ]
   }
 }

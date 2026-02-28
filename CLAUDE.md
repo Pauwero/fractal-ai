@@ -152,3 +152,37 @@ See `claude-progress.txt` for recent session history.
 - Never merge to main without passing tests
 - Never call a finding "validated" if tested on discovery data — that's IN_SAMPLE
 - Never trust a win rate without stating sample size and validation type
+
+## Research Pipeline
+
+The `.claude/agents/` directory contains 6 research pipeline agents.
+Start with: `/research "your hypothesis or question"`
+Continue with: `/continue`
+The SubagentStop hook guides you through each step.
+
+### Pipeline Flow
+```
+[1] Research Analyst → [2] Devil's Advocate → GATE 1
+→ [3] Quant Analyst → [4] Statistical Auditor → GATE 2
+→ [5] Synthesizer (Opus) → [6] Rule Formulator → GATE 3
+```
+
+### Database Access
+Supabase MCP is configured for two databases:
+- **The Beacon Robin** (research): `hdtpvlyofjevvoerculm` — use for ALL analysis
+- **Fractal AI** (production): `eooqdkupnrgknstjvkwc` — DO NOT modify during research
+
+### Research Conventions
+- Hypotheses: H-XXX, Questions: Q-XXX, Findings: F-XXX
+- Conclusions: C-XXX, Rules: R-XXX, Strategies: S-NAME-vX
+- Pipeline state tracked in `.claude/pipeline/queue.json`
+- Artifacts in `.claude/pipeline/runs/RUN-XXX/`
+- Agent memory in `.claude/agent-memory/<agent-name>/MEMORY.md`
+
+### Research Rules
+1. Never modify production database during research
+2. Every finding must record validation_type honestly
+3. Record ALL findings including neutral/contradicting ones
+4. Human gates must be respected (steps 2→3 and 4→5)
+5. Pre-register hypotheses BEFORE any data analysis (confirmatory sessions)
+6. North Star metrics evaluated for every actionable conclusion
